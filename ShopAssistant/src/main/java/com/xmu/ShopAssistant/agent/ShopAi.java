@@ -80,6 +80,7 @@ public class ShopAi {
     // 最多循环次数
     private static final Integer MAX_STEPS = 20;
 
+    // 默认最多保存 20 条消息
     private static final Integer DEFAULT_MAX_MESSAGES = 20;
 
     // SpringAI 自带的 ChatOptions, 不是 AgentDTO.ChatOptions

@@ -32,6 +32,7 @@ import java.util.*;
 import java.util.function.Function;
 import java.util.stream.Collectors;
 
+
 @Component
 public class ShopAiFactory {
 
@@ -313,8 +314,9 @@ public class ShopAiFactory {
     public ShopAi create(String agentId, String chatSessionId) {
         Agent agent = loadAgent(agentId);
         AgentDTO agentConfig = toAgentConfig(agent);
+        log.info("加载chatSessionId记忆");
         List<Message> memory = loadMemory(chatSessionId);
-
+        log.info("加载chatSessionId记忆成功");
         // 解析 agent 的支持的知识库
         List<KnowledgeBaseDTO> knowledgeBases = resolveRuntimeKnowledgeBases(agentConfig);
         // 解析 agent 支持的工具调用

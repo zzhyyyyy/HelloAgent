@@ -4,6 +4,7 @@ import com.xmu.ShopAssistant.mapper.ChunkBgeM3Mapper;
 import com.xmu.ShopAssistant.model.entity.ChunkBgeM3;
 import com.xmu.ShopAssistant.service.RagService;
 import lombok.Data;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 import org.springframework.util.Assert;
 import org.springframework.web.reactive.function.client.WebClient;
@@ -12,6 +13,7 @@ import java.util.List;
 import java.util.Map;
 
 @Service
+@Slf4j
 public class RagServiceImpl implements RagService {
 
     // 封装本地的模型调用
@@ -39,6 +41,7 @@ public class RagServiceImpl implements RagService {
                 .bodyToMono(EmbeddingResponse.class)
                 .block();
         Assert.notNull(resp, "Embedding response cannot be null");
+        log.info("EmbeddingSize: {}", resp.getEmbedding().length);
         return resp.getEmbedding();
     }
 

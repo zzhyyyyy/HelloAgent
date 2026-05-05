@@ -39,12 +39,20 @@ public class KnowledgeTools implements Tool {
 
     @org.springframework.ai.tool.annotation.Tool(
             name = "KnowledgeTool",
-            description = "从知识库执行相似性检索（RAG）。参数：kbsId（知识库ID；若传ALL或留空则自动检索所有知识库）和query（查询文本）。"
+            description = "从知识库执行混合检索（BM25+向量）。参数：kbsId（知识库ID；若传ALL或留空则自动检索所有知识库）和query（查询文本）。"
     )
     public String knowledgeQuery(String kbsId, String query) {
-        List<String> strings = ragService.similaritySearch(kbsId, query);
+        if (!StringUtils.hasText(query)) {
+            return "查询为空";
+        }
+        boolean searchAll = !StringUtils.hasText(kbsId) || "ALL".equalsIgnoreCase(kbsId.trim());
+        if (searchAll) {
+            return searchAllKnowledgeBases(query);
+        }
+
+        List<String> strings = ragService.hybridSearch(kbsId, query, 3);
         if (strings == null || strings.isEmpty()) {
-            return "[KB " + kbsId + "] 无匹配结果";
+            return "[KB " + kbsId + "] 无匹配结果（混合检索）";
         }
         return "[KB " + kbsId + "]\n" + String.join("\n", strings);
     }
@@ -75,7 +83,7 @@ public class KnowledgeTools implements Tool {
 
         List<String> blocks = new ArrayList<>();
         for (String id : kbIds) {
-            List<String> hits = ragService.similaritySearch(id, query);
+            List<String> hits = ragService.hybridSearch(id, query, 3);
             if (hits == null || hits.isEmpty()) {
                 continue;
             }

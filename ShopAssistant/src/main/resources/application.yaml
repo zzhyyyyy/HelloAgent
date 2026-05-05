@@ -6,6 +6,10 @@ spring:
     username: muzhiyuan
     password: 20031121zzh.
     driver-class-name: org.postgresql.Driver
+  servlet:
+    multipart:
+      max-file-size: 10MB
+      max-request-size: 10MB
   mail:
     host: smtp.qq.com
     port: 587
@@ -21,7 +25,7 @@ spring:
             required: true
   ai:
     deepseek:
-      api-key: sk-69e232cd553a41f481e3982933e6c75c
+      api-key: sk-cc2ef34698f6426392338a7b88a41a91
       base-url: https://api.deepseek.com
       chat:
         options:

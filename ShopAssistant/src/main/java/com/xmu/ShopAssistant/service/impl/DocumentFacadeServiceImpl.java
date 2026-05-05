@@ -338,10 +338,11 @@ public class DocumentFacadeServiceImpl implements DocumentFacadeService {
             String titlePrefix
     ) {
         List<MarkdownParserService.MarkdownSection> sections = new ArrayList<>();
-        if (!StringUtils.hasText(text)) {
+        String sanitizedInput = sanitizeForPostgres(text);
+        if (!StringUtils.hasText(sanitizedInput)) {
             return sections;
         }
-        String normalized = text.replace("\r\n", "\n").replace("\r", "\n").trim();
+        String normalized = sanitizedInput.replace("\r\n", "\n").replace("\r", "\n").trim();
         if (!StringUtils.hasText(normalized)) {
             return sections;
         }
@@ -364,13 +365,26 @@ public class DocumentFacadeServiceImpl implements DocumentFacadeService {
     }
 
     private String truncate(String text, int maxLen) {
-        if (!StringUtils.hasText(text)) {
+        String sanitized = sanitizeForPostgres(text);
+        if (!StringUtils.hasText(sanitized)) {
             return "";
         }
-        if (text.length() <= maxLen) {
-            return text;
+        if (sanitized.length() <= maxLen) {
+            return sanitized;
         }
-        return text.substring(0, maxLen);
+        return sanitized.substring(0, maxLen);
+    }
+
+    /**
+     * PostgreSQL text/jsonb 不允许包含 0x00；同时清理不可见控制字符（保留换行/制表符）
+     */
+    private String sanitizeForPostgres(String text) {
+        if (text == null) {
+            return null;
+        }
+        return text
+                .replace("\u0000", "")
+                .replaceAll("[\\x01-\\x08\\x0B\\x0C\\x0E-\\x1F]", "");
     }
 
     /**

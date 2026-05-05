@@ -10,4 +10,8 @@ public interface RagService {
     List<String> similaritySearch(String kbId, String title);
 
     List<ChunkBgeM3> similaritySearchChunks(String kbId, String query, int limit);
+
+    List<String> hybridSearch(String kbId, String query, int limit);
+
+    List<ChunkBgeM3> hybridSearchChunks(String kbId, String query, int limit);
 }

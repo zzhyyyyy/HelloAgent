@@ -25,7 +25,7 @@ spring:
             required: true
   ai:
     deepseek:
-      api-key: sk-cc2ef34698f6426392338a7b88a41a91
+      api-key: sk-23c7cd06f7e44f298275bcb12bdcb447
       base-url: https://api.deepseek.com
       chat:
         options:
@@ -44,3 +44,8 @@ mybatis:
 document:
   storage:
     base-path: ./data/documents
+
+pdf:
+  font:
+    path: C:/Windows/Fonts/msyh.ttc   # 中文字体路径，不配置则自动探测系统字体
+    ttc-index: 0                        # TTC 字体集合索引（默认 0）

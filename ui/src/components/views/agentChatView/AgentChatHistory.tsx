@@ -1,4 +1,5 @@
 import React, { useState, useRef, useEffect, useCallback } from "react";
+import { Button } from "antd";
 import { Bubble } from "@ant-design/x";
 import XMarkdown from "@ant-design/x-markdown";
 import {
@@ -7,7 +8,9 @@ import {
   RobotOutlined,
   DownOutlined,
   RightOutlined,
+  DownloadOutlined,
 } from "@ant-design/icons";
+import { BASE_URL } from "../../../api/http";
 import type { ChatMessageVO, SseMessageType, ToolCall, ToolResponse } from "../../../types";
 
 interface AgentChatHistoryProps {
@@ -225,6 +228,19 @@ const AgentChatHistory: React.FC<AgentChatHistoryProps> = ({
                         >
                           {message.content}
                         </XMarkdown>
+                      </div>
+                    )}
+                    {/* PDF 下载按钮 */}
+                    {message.content && (
+                      <div className="mt-2 flex justify-end">
+                        <a
+                          href={`${BASE_URL}/chat-messages/${message.id}/pdf`}
+                          download
+                          className="inline-flex items-center gap-1 text-xs text-gray-400 hover:text-blue-500 transition-colors"
+                        >
+                          <DownloadOutlined />
+                          下载 PDF
+                        </a>
                       </div>
                     )}
                   </div>

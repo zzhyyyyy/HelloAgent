@@ -191,6 +191,19 @@ public class ChatMessageFacadeServiceImpl implements ChatMessageFacadeService {
     }
 
     @Override
+    public ChatMessageDTO getChatMessageById(String chatMessageId) {
+        ChatMessage chatMessage = chatMessageMapper.selectById(chatMessageId);
+        if (chatMessage == null) {
+            throw new BizException("聊天消息不存在: " + chatMessageId);
+        }
+        try {
+            return chatMessageConverter.toDTO(chatMessage);
+        } catch (JsonProcessingException e) {
+            throw new BizException("解析聊天消息时发生序列化错误: " + e.getMessage());
+        }
+    }
+
+    @Override
     public void deleteChatMessage(String chatMessageId) {
         ChatMessage chatMessage = chatMessageMapper.selectById(chatMessageId);
         if (chatMessage == null) {

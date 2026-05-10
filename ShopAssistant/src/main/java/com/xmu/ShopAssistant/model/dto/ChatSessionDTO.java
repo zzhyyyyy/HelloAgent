@@ -26,5 +26,6 @@ public class ChatSessionDTO {
         private String sessionSummary;
         private Integer summarizedMessageCount;
         private LocalDateTime summaryUpdatedAt;
+        private String mode; // "SINGLE" 或 "MULTI"（多Agent模式）
     }
 }

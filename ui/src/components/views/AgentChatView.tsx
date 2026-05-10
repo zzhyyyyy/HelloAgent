@@ -1,6 +1,7 @@
 import React, { useCallback, useEffect, useRef, useState } from "react";
 import { useParams, useNavigate, useLocation } from "react-router-dom";
-import { message as antdMessage } from "antd";
+import { Tag, message as antdMessage } from "antd";
+import { TeamOutlined, UserOutlined } from "@ant-design/icons";
 import AgentChatHistory from "./agentChatView/AgentChatHistory.tsx";
 import AgentChatInput from "./agentChatView/AgentChatInput.tsx";
 import {
@@ -37,6 +38,7 @@ const AgentChatView: React.FC = () => {
   };
 
   const [agentId, setAgentId] = useState<string>("");
+  const [multiAgentMode, setMultiAgentMode] = useState(false);
   const initMessageKeyRef = useRef<string | null>(null);
 
   const getChatMessages = useCallback(async () => {
@@ -47,9 +49,11 @@ const AgentChatView: React.FC = () => {
     setMessages(resp.chatMessages);
 
     const fetchData = async () => {
-      const resp = await getChatSession(chatSessionId);
-      // setChatSession(resp.chatSession);
-      setAgentId(resp.chatSession.agentId);
+      const sessionResp = await getChatSession(chatSessionId);
+      setAgentId(sessionResp.chatSession.agentId);
+      if (sessionResp.chatSession.mode === "MULTI") {
+        setMultiAgentMode(true);
+      }
     };
     fetchData().then();
   }, [chatSessionId]);
@@ -64,6 +68,7 @@ const AgentChatView: React.FC = () => {
   const handleSendMessage = async (
     value: string | { text: string },
     selectedAgentId?: string,
+    mode?: string,
   ) => {
     // 处理 Sender 组件可能传递的不同格式
     const message = typeof value === "string" ? value : value.text;
@@ -83,6 +88,7 @@ const AgentChatView: React.FC = () => {
         const response = await createChatSession({
           agentId: nextAgentId,
           title: message.slice(0, 20),
+          mode: mode ?? (multiAgentMode ? "MULTI" : "SINGLE"),
         });
         // 刷新聊天会话列表
         await refreshChatSessions();
@@ -221,6 +227,8 @@ const AgentChatView: React.FC = () => {
         agents={agents}
         loading={loading}
         handleSendMessage={handleSendMessage}
+        multiAgentMode={multiAgentMode}
+        onModeChange={setMultiAgentMode}
       />
     );
   }
@@ -228,6 +236,20 @@ const AgentChatView: React.FC = () => {
   // 如果有 chatSessionId，显示正常的聊天界面
   return (
     <div className="flex flex-col h-full">
+      {/* 模式指示器 */}
+      {chatSessionId && (
+        <div className="flex justify-end px-16 pt-2">
+          {multiAgentMode ? (
+            <Tag icon={<TeamOutlined />} color="blue" className="text-xs">
+              多 Agent 协作模式
+            </Tag>
+          ) : (
+            <Tag icon={<UserOutlined />} color="default" className="text-xs">
+              单 Agent 模式
+            </Tag>
+          )}
+        </div>
+      )}
       <AgentChatHistory
         messages={messages}
         displayAgentStatus={displayAgentStatus}

@@ -6,4 +6,5 @@ import lombok.Data;
 public class CreateChatSessionRequest {
     private String agentId;
     private String title;
+    private String mode; // "SINGLE"（默认）或 "MULTI"
 }

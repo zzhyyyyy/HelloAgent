@@ -9,4 +9,5 @@ public class ChatSessionVO {
     private String id;
     private String agentId;
     private String title;
+    private String mode; // "SINGLE" 或 "MULTI"
 }

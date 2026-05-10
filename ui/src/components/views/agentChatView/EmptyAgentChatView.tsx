@@ -1,10 +1,12 @@
 import React, { useState, useMemo } from "react";
-import { Card, Space, Typography, Select, message as antdMessage } from "antd";
+import { Card, Space, Typography, Select, Switch, message as antdMessage } from "antd";
 import {
   BulbOutlined,
   MessageOutlined,
   RobotOutlined,
   DownOutlined,
+  TeamOutlined,
+  UserOutlined,
 } from "@ant-design/icons";
 import { Sender } from "@ant-design/x";
 import { type AgentVO } from "../../../api/api.ts";
@@ -13,15 +15,19 @@ import { getAgentEmoji } from "../../../utils";
 const { Title, Text } = Typography;
 
 interface DefaultAgentChatViewProps {
-  handleSendMessage: (message: string, agentId?: string) => Promise<void>;
+  handleSendMessage: (message: string, agentId?: string, mode?: string) => Promise<void>;
   loading: boolean;
   agents: AgentVO[];
+  multiAgentMode: boolean;
+  onModeChange: (mode: boolean) => void;
 }
 
 const EmptyAgentChatView: React.FC<DefaultAgentChatViewProps> = ({
   handleSendMessage,
   loading,
   agents,
+  multiAgentMode,
+  onModeChange,
 }) => {
   const [message, setMessage] = useState("");
   const [selectedAgentId, setSelectedAgentId] = useState<string | null>(null);
@@ -44,10 +50,10 @@ const EmptyAgentChatView: React.FC<DefaultAgentChatViewProps> = ({
 
   return (
     <div className="flex flex-col h-full">
-      {/* Agent 选择器 - 顶部 */}
+      {/* Agent 选择器 + 模式切换 - 顶部 */}
       {agents.length > 0 && (
         <div className="border-b border-gray-200 bg-white px-4 py-3">
-          <div className="flex items-center justify-start">
+          <div className="flex items-center justify-between">
             <Select
               value={effectiveAgentId}
               onChange={(value) => setSelectedAgentId(value)}
@@ -68,6 +74,20 @@ const EmptyAgentChatView: React.FC<DefaultAgentChatViewProps> = ({
                 label: agent.name,
               }))}
             />
+            <div className="flex items-center gap-2">
+              <UserOutlined className={`text-sm ${!multiAgentMode ? 'text-blue-500' : 'text-gray-400'}`} />
+              <Switch
+                checked={multiAgentMode}
+                onChange={onModeChange}
+                size="small"
+                checkedChildren={<TeamOutlined />}
+                unCheckedChildren={<UserOutlined />}
+              />
+              <TeamOutlined className={`text-sm ${multiAgentMode ? 'text-blue-500' : 'text-gray-400'}`} />
+              <span className="text-xs text-gray-500 ml-1">
+                {multiAgentMode ? "多Agent协作" : "单Agent"}
+              </span>
+            </div>
           </div>
         </div>
       )}
@@ -157,7 +177,7 @@ const EmptyAgentChatView: React.FC<DefaultAgentChatViewProps> = ({
               }
 
               try {
-                await handleSendMessage(trimmedMessage, effectiveAgentId);
+                await handleSendMessage(trimmedMessage, effectiveAgentId, multiAgentMode ? "MULTI" : "SINGLE");
                 setMessage("");
               } catch (error) {
                 const errorMessage =

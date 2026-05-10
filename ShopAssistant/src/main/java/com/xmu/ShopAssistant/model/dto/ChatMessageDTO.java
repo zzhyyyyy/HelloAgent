@@ -33,6 +33,7 @@ public class ChatMessageDTO {
     public static class MetaData {
         private ToolResponseMessage.ToolResponse toolResponse;
         private List<AssistantMessage.ToolCall> toolCalls;
+        private String agentRole;  // 多Agent模式下标识消息由哪个Agent产生: "supervisor", "specialist:{name}"
     }
 
     @Getter

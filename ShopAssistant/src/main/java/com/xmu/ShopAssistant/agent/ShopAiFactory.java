@@ -1,6 +1,7 @@
 package com.xmu.ShopAssistant.agent;
 
 import com.fasterxml.jackson.core.JsonProcessingException;
+import com.xmu.ShopAssistant.agent.multi.DelegateToSpecialistTool;
 import com.xmu.ShopAssistant.agent.tools.Tool;
 import com.xmu.ShopAssistant.config.ChatClientRegistry;
 import com.xmu.ShopAssistant.converter.AgentConverter;
@@ -16,6 +17,7 @@ import com.xmu.ShopAssistant.model.entity.KnowledgeBase;
 import com.xmu.ShopAssistant.service.AgentMemoryService;
 import com.xmu.ShopAssistant.service.ChatMessageFacadeService;
 import com.xmu.ShopAssistant.service.SessionSummaryService;
+import com.xmu.ShopAssistant.service.SpecialistRunner;
 import com.xmu.ShopAssistant.service.SseService;
 import com.xmu.ShopAssistant.service.ToolFacadeService;
 import org.slf4j.Logger;
@@ -48,6 +50,7 @@ public class ShopAiFactory {
     private final ChatMessageConverter chatMessageConverter;
     private final AgentMemoryService agentMemoryService;
     private final SessionSummaryService sessionSummaryService;
+    private final SpecialistRunner specialistRunner;
 
     // 运行时 Agent 配置
     private AgentDTO agentConfig;
@@ -63,7 +66,8 @@ public class ShopAiFactory {
             ChatMessageFacadeService chatMessageFacadeService,
             ChatMessageConverter chatMessageConverter,
             AgentMemoryService agentMemoryService,
-            SessionSummaryService sessionSummaryService
+            SessionSummaryService sessionSummaryService,
+            SpecialistRunner specialistRunner
     ) {
         this.chatClientRegistry = chatClientRegistry;
         this.sseService = sseService;
@@ -76,6 +80,7 @@ public class ShopAiFactory {
         this.chatMessageConverter = chatMessageConverter;
         this.agentMemoryService = agentMemoryService;
         this.sessionSummaryService = sessionSummaryService;
+        this.specialistRunner = specialistRunner;
     }
 
     private Agent loadAgent(String agentId) {
@@ -331,5 +336,119 @@ public class ShopAiFactory {
                 toolCallbacks,
                 chatSessionId
         );
+    }
+
+    /**
+     * 创建一个 Supervisor 模式的 ShopAi 实例（多 Agent 编排）。
+     * Supervisor 拥有用户 Agent 的所有工具 + DelegateToSpecialistTool，
+     * 可将子任务委派给其他 Specialist Agent 执行。
+     */
+    public ShopAi createSupervisor(String userAgentId, String chatSessionId) {
+        Agent agent = loadAgent(userAgentId);
+        AgentDTO agentConfig = toAgentConfig(agent);
+        log.info("加载 chatSessionId 记忆（Supervisor 模式）");
+        List<Message> memory = loadMemory(chatSessionId);
+
+        // 解析知识库
+        List<KnowledgeBaseDTO> knowledgeBases = resolveRuntimeKnowledgeBases(agentConfig);
+
+        // 解析用户 Agent 的工具，并追加 DelegateToSpecialistTool
+        List<Tool> runtimeTools = resolveRuntimeTools(agentConfig);
+        DelegateToSpecialistTool delegateTool = new DelegateToSpecialistTool(
+                chatSessionId,
+                specialistRunner,
+                chatMessageFacadeService,
+                chatMessageConverter,
+                sseService
+        );
+        runtimeTools.add(delegateTool);
+
+        List<ToolCallback> toolCallbacks = buildToolCallbacks(runtimeTools);
+
+        // 构建 Supervisor 系统提示词
+        String supervisorSystemPrompt = buildSupervisorSystemPrompt(agent, agentConfig, knowledgeBases);
+
+        // 获取 ChatClient
+        ChatClient chatClient = chatClientRegistry.get(agent.getModel());
+        if (chatClient == null) {
+            throw new IllegalStateException("未找到对应的 ChatClient: " + agent.getModel());
+        }
+
+        String mergedPrompt = mergeSystemPromptWithLongTermMemory(supervisorSystemPrompt, agent.getId());
+
+        int messageLength = agentConfig.getChatOptions() != null && agentConfig.getChatOptions().getMessageLength() != null
+                ? agentConfig.getChatOptions().getMessageLength()
+                : 10;
+
+        ShopAi shopAi = new ShopAi(
+                agent.getId(),
+                "Supervisor",
+                agent.getDescription(),
+                mergedPrompt,
+                chatClient,
+                messageLength,
+                memory,
+                toolCallbacks,
+                knowledgeBases,
+                chatSessionId,
+                sseService,
+                chatMessageFacadeService,
+                chatMessageConverter
+        );
+        shopAi.setAgentRole("supervisor");
+        return shopAi;
+    }
+
+    /**
+     * 构建 Supervisor 的系统提示词，包含可用的 Specialist 列表。
+     */
+    private String buildSupervisorSystemPrompt(Agent userAgent, AgentDTO agentConfig, List<KnowledgeBaseDTO> knowledgeBases) {
+        // 收集所有其他 Agent 作为可用的 Specialist
+        List<Agent> allAgents = agentMapper.selectAll();
+        StringBuilder specialistList = new StringBuilder();
+        for (Agent a : allAgents) {
+            if (a.getId().equals(userAgent.getId())) {
+                continue; // 排除自己
+            }
+            specialistList.append("- ")
+                    .append(a.getId()).append(": ")
+                    .append(a.getName() != null ? a.getName() : "未命名")
+                    .append(" — ")
+                    .append(a.getDescription() != null ? a.getDescription() : "无描述")
+                    .append("\n");
+        }
+
+        String kbsInfo = knowledgeBases != null && !knowledgeBases.isEmpty()
+                ? "你拥有的知识库列表：\n" + knowledgeBases.stream()
+                    .map(kb -> "- " + kb.getId() + ": " + kb.getName())
+                    .collect(java.util.stream.Collectors.joining("\n"))
+                : "当前没有可用的知识库。";
+
+        return """
+                你是 ShopAssistant 的「任务协调员（Supervisor）」，负责协调多个专业 Agent 协作解决用户问题。
+
+                【你的职责】
+                1. 分析用户的复杂问题，将其拆解为若干子任务
+                2. 使用 DelegateToSpecialist 工具将子任务委派给最合适的 Specialist Agent
+                3. 收集所有 Specialist 的返回结果，综合整理后给出最终回答
+                4. 对于简单问题，你也可以直接使用现有工具回答，无需委派
+
+                【可用 Specialist Agent】
+                %s
+
+                【委派规则】
+                - 每个子任务应尽量清晰、完整地描述上下文和目标
+                - 可以并行委派多个 Specialist（依次调用工具）
+                - Specialist 会独立执行任务并使用自己的工具
+                - 收到 Specialist 返回结果后，需要整理汇总
+
+                【知识库】
+                %s
+
+                【注意事项】
+                - 用户的问题可能涉及多个领域，合理拆分任务
+                - 如果 Specialist 返回的信息不足，可以追问或重新委派
+                - 最终回答应整合所有 Specialist 的结果，给出完整的答案
+                """.formatted(specialistList, kbsInfo);
     }
 }

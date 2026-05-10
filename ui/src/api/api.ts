@@ -90,6 +90,7 @@ export async function updateAgent(
 export interface CreateChatSessionRequest {
   agentId: string;
   title?: string;
+  mode?: string;
 }
 
 export interface CreateChatSessionResponse {
@@ -109,6 +110,7 @@ export interface ChatSessionVO {
   id: string;
   agentId: string;
   title?: string;
+  mode?: string;
 }
 
 export interface GetChatSessionsResponse {

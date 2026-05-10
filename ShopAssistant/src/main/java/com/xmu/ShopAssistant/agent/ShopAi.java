@@ -96,6 +96,9 @@ public class ShopAi {
     // 最后一次的 ChatResponse
     private ChatResponse lastChatResponse;
 
+    // 多 Agent 模式下标识消息由哪个 Agent 产生
+    private String agentRole;
+
     // AI 返回的，已经持久化，但是需要 sse 发给前端的消息
     private final List<ChatMessageDTO> pendingChatMessages = new ArrayList<>();
 
@@ -154,6 +157,10 @@ public class ShopAi {
         this.toolCallingManager = ToolCallingManager.builder().build();
     }
 
+    public void setAgentRole(String agentRole) {
+        this.agentRole = agentRole;
+    }
+
     // 打印工具调用信息
     private void logToolCalls(List<AssistantMessage.ToolCall> toolCalls) {
         if (toolCalls == null || toolCalls.isEmpty()) {
@@ -185,12 +192,14 @@ public class ShopAi {
         ChatMessageDTO.ChatMessageDTOBuilder builder = ChatMessageDTO.builder();
         if (message instanceof AssistantMessage assistantMessage) {
             String content = appendPaperRecommendationIfNeeded(assistantMessage.getText());
+            ChatMessageDTO.MetaData metaData = ChatMessageDTO.MetaData.builder()
+                    .toolCalls(assistantMessage.getToolCalls())
+                    .agentRole(this.agentRole)
+                    .build();
             ChatMessageDTO chatMessageDTO = builder.role(ChatMessageDTO.RoleType.ASSISTANT)
                     .content(content)
                     .sessionId(this.chatSessionId)
-                    .metadata(ChatMessageDTO.MetaData.builder()
-                            .toolCalls(assistantMessage.getToolCalls())
-                            .build())
+                    .metadata(metaData)
                     .build();
             CreateChatMessageResponse chatMessage = chatMessageFacadeService.createChatMessage(chatMessageDTO);
             chatMessageDTO.setId(chatMessage.getChatMessageId());
@@ -198,12 +207,14 @@ public class ShopAi {
         } else if (message instanceof ToolResponseMessage toolResponseMessage) {
             // 持久化 ToolResponseMessage
             for (ToolResponseMessage.ToolResponse toolResponse : toolResponseMessage.getResponses()) {
+                ChatMessageDTO.MetaData toolMetaData = ChatMessageDTO.MetaData.builder()
+                        .toolResponse(toolResponse)
+                        .agentRole(this.agentRole)
+                        .build();
                 ChatMessageDTO chatMessageDTO = builder.role(ChatMessageDTO.RoleType.TOOL)
                         .content(toolResponse.responseData())
                         .sessionId(this.chatSessionId)
-                        .metadata(ChatMessageDTO.MetaData.builder()
-                                .toolResponse(toolResponse)
-                                .build())
+                        .metadata(toolMetaData)
                         .build();
                 CreateChatMessageResponse chatMessage = chatMessageFacadeService.createChatMessage(chatMessageDTO);
                 chatMessageDTO.setId(chatMessage.getChatMessageId());

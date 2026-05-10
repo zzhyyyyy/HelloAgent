@@ -208,45 +208,65 @@ const AgentChatHistory: React.FC<AgentChatHistoryProps> = ({
           <div className="mb-4" key={message.id}>
             {/* Assistant 消息 */}
             {message.role === "assistant" && (
-              <Bubble
-                content={
-                  <div className="w-full">
-                    {/* 工具调用展示 */}
-                    {message.metadata?.toolCalls &&
-                      message.metadata.toolCalls.length > 0 && (
-                        <div className="mb-2 flex flex-wrap gap-2">
-                          {message.metadata.toolCalls.map((toolCall) => (
-                            <ToolCallDisplay key={toolCall.id} toolCall={toolCall} />
-                          ))}
+              <div>
+                {/* 多 Agent 角色标签 */}
+                {message.metadata?.agentRole && (
+                  <div className="mb-1 flex items-center gap-2">
+                    <span className={`text-xs font-medium px-2 py-0.5 rounded-full ${
+                      message.metadata.agentRole === "supervisor"
+                        ? "bg-purple-100 text-purple-700"
+                        : message.metadata.agentRole.startsWith("specialist:")
+                          ? "bg-blue-100 text-blue-700"
+                          : "bg-gray-100 text-gray-600"
+                    }`}>
+                      {message.metadata.agentRole === "supervisor"
+                        ? "协调员"
+                        : message.metadata.agentRole.startsWith("specialist:")
+                          ? message.metadata.agentRole.replace("specialist:", "专家: ")
+                          : message.metadata.agentRole}
+                    </span>
+                  </div>
+                )}
+                <Bubble
+                  content={
+                    <div className="w-full">
+                      {/* 工具调用展示 */}
+                      {message.metadata?.toolCalls &&
+                        message.metadata.toolCalls.length > 0 && (
+                          <div className="mb-2 flex flex-wrap gap-2">
+                            {message.metadata.toolCalls.map((toolCall) => (
+                              <ToolCallDisplay key={toolCall.id} toolCall={toolCall} />
+                            ))}
+                          </div>
+                        )}
+                      {/* 消息内容 */}
+                      {message.content && (
+                        <div>
+                          <XMarkdown
+                            streaming={{ enableAnimation: false, hasNextChunk: true }}
+                          >
+                            {message.content}
+                          </XMarkdown>
                         </div>
                       )}
-                    {/* 消息内容 */}
-                    {message.content && (
-                      <div>
-                        <XMarkdown
-                          streaming={{ enableAnimation: false, hasNextChunk: true }}
-                        >
-                          {message.content}
-                        </XMarkdown>
-                      </div>
-                    )}
-                    {/* PDF 下载按钮 */}
-                    {message.content && (
-                      <div className="mt-2 flex justify-end">
-                        <a
-                          href={`${BASE_URL}/chat-messages/${message.id}/pdf`}
-                          download
-                          className="inline-flex items-center gap-1 text-xs text-gray-400 hover:text-blue-500 transition-colors"
-                        >
-                          <DownloadOutlined />
-                          下载 PDF
-                        </a>
-                      </div>
-                    )}
-                  </div>
-                }
-                placement="start"
-              />
+                      {/* PDF 下载按钮 */}
+                      {message.content && (
+                        <div className="mt-2 flex justify-end">
+                          <a
+                            href={`${BASE_URL}/chat-messages/${message.id}/pdf`}
+                            download
+                            className="inline-flex items-center gap-1 text-xs text-gray-400 hover:text-blue-500 transition-colors"
+                          >
+                            <DownloadOutlined />
+                            下载 PDF
+                          </a>
+                        </div>
+                      )}
+                    </div>
+                  }
+                  placement="start"
+                />
+              </div>
             )}
 
             {/* Tool 消息 - 简洁展示，不使用气泡 */}

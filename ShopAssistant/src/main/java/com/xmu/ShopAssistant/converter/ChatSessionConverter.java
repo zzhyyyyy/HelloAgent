@@ -52,6 +52,7 @@ public class ChatSessionConverter {
                 .id(dto.getId())
                 .agentId(dto.getAgentId())
                 .title(dto.getTitle())
+                .mode(dto.getMetadata() != null ? dto.getMetadata().getMode() : null)
                 .build();
     }
 
@@ -63,9 +64,14 @@ public class ChatSessionConverter {
         Assert.notNull(request, "CreateChatSessionRequest cannot be null");
         Assert.notNull(request.getAgentId(), "AgentId cannot be null");
 
+        ChatSessionDTO.MetaData metadata = ChatSessionDTO.MetaData.builder()
+                .mode(request.getMode() != null ? request.getMode() : "SINGLE")
+                .build();
+
         return ChatSessionDTO.builder()
                 .agentId(request.getAgentId())
                 .title(request.getTitle())
+                .metadata(metadata)
                 .build();
     }
 
@@ -76,5 +82,12 @@ public class ChatSessionConverter {
         if (request.getTitle() != null) {
             dto.setTitle(request.getTitle());
         }
+    }
+
+    public ChatSessionDTO.MetaData deserializeMetadata(String metadataJson) throws JsonProcessingException {
+        if (metadataJson == null) {
+            return null;
+        }
+        return objectMapper.readValue(metadataJson, ChatSessionDTO.MetaData.class);
     }
 }

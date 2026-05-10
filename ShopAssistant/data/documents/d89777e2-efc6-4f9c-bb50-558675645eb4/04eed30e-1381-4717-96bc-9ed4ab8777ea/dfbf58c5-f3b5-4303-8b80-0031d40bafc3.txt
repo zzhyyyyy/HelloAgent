@@ -1,0 +1,53 @@
+select	//要查出什么数据
+{CASE WHEN语句(如果有)}
+from  a	//查找哪个数据库
+join   b    //联合哪个数据库
+on xxx   //以什么条件联合 或 使用using()
+where     //满足什么条件   
+{
+ group by	     //分组
+ order by  //排序
+}
+{
+ having   //分组之后筛选数据 ，having使用的过滤条件必须从group by中选择
+}
+limit         //输出前几个
+
+
+update 语法
+update 表名
+set
+	列名对象 = ...
+where 满足什么条件（或是对哪一个小对象进行更改）
+eg:
+-- UPDATE invoices
+-- set 
+--   payment_total = invoice_total * 0.7
+-- WHERE client_id = 3
+-- 对用户编号为3的用户进行更改付款
+
+
+
+trigger触发器与表隐形绑定，不需要特地先执行trigger，可以直接执行相应操作完成tirgger后续操作
+
+
+
+数据库常见的四种并发行为
+1.(Lost Update)丢失更新->多个操作同时更新一个字段 后提交的更新会覆盖先提交的更新
+2.(Dirty Reads)脏读->当前操作读取了其他操作中未提交的数据，未提交的数据可能被rollback导致成为了读取不存在的数据
+3.(Non-repeatig Reads) 当前操作先后读取同一个字段，且出现前后不一致的情况
+4.幻读->因其他操作新增行或删除行，导致两次相同查询得到不同行的集合
+
+
+隔离级别(set transaction isolation level ...)
+1.Read Uncommitted (级别最低，对并发操作基本不做任何处理，非常容易引起并发操作)
+2.Read committed(可以避免脏读，但无法避免非重复读)
+3.Repetable read(可避免非重复读)
+4.Serializable
+
+
+ifnull()语法->ifnull(a,b) 如果a is null 返回b 否则返回a
+
+
+在使用union合并两个查询表时，和去除完全一致的行
+要是想不去重 使用union all

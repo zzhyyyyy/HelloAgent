@@ -1,0 +1,6 @@
+启动redis服务
+进入对应文件夹cmd
+redis-server.exe redis.window.conf
+
+用户连接redis服务
+redis-cli.exe -h (ip地址 localhost) -p (redis占用端口号 6379) -a (password)

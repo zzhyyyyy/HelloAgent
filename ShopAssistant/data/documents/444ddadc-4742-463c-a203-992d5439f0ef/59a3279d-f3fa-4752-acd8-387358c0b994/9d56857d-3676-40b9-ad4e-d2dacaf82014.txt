@@ -1,0 +1,3 @@
+1.优化每轮对话的记忆获取机制，当前是每轮对话都要去数据库里面重新查历史对话信息 反序列化后重建Message再灌入到Agent的MessageWindowChatMemory
+
+2.加入RAG召回性能判断指标

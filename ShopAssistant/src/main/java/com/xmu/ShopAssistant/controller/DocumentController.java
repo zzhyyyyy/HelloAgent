@@ -4,6 +4,7 @@ import com.xmu.ShopAssistant.model.common.ApiResponse;
 import com.xmu.ShopAssistant.model.request.CreateDocumentRequest;
 import com.xmu.ShopAssistant.model.request.UpdateDocumentRequest;
 import com.xmu.ShopAssistant.model.response.CreateDocumentResponse;
+import com.xmu.ShopAssistant.model.response.DocumentStatusResponse;
 import com.xmu.ShopAssistant.model.response.GetDocumentsResponse;
 import com.xmu.ShopAssistant.service.DocumentFacadeService;
 import lombok.AllArgsConstructor;
@@ -55,5 +56,11 @@ public class DocumentController {
     public ApiResponse<Void> updateDocument(@PathVariable String documentId, @RequestBody UpdateDocumentRequest request) {
         documentFacadeService.updateDocument(documentId, request);
         return ApiResponse.success();
+    }
+
+    // 获取文档解析状态
+    @GetMapping("/documents/{documentId}/status")
+    public ApiResponse<DocumentStatusResponse> getDocumentStatus(@PathVariable String documentId) {
+        return ApiResponse.success(documentFacadeService.getDocumentStatus(documentId));
     }
 }

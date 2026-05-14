@@ -1,4 +1,4 @@
-import React, { useMemo, useState } from "react";
+import React, { useMemo, useRef, useState } from "react";
 import { useParams } from "react-router-dom";
 import {
   Card,
@@ -20,7 +20,11 @@ import {
 import type { UploadProps } from "antd";
 import { useKnowledgeBases } from "../../hooks/useKnowledgeBases.ts";
 import { useDocuments } from "../../hooks/useDocuments.ts";
-import { uploadDocument, type DocumentVO } from "../../api/api.ts";
+import {
+  uploadDocument,
+  getDocumentStatus,
+  type DocumentVO,
+} from "../../api/api.ts";
 
 const { Title, Text, Paragraph } = Typography;
 const SUPPORTED_EXTENSIONS = [".md", ".markdown", ".txt", ".pdf"];
@@ -32,6 +36,14 @@ const KnowledgeBaseView: React.FC = () => {
     useDocuments(knowledgeBaseId);
 
   const [uploading, setUploading] = useState(false);
+  const pollingRef = useRef<number | null>(null);
+
+  const stopPolling = () => {
+    if (pollingRef.current !== null) {
+      clearInterval(pollingRef.current);
+      pollingRef.current = null;
+    }
+  };
 
   // 查找当前知识库的详细信息
   const currentKnowledgeBase = useMemo(() => {
@@ -65,14 +77,51 @@ const KnowledgeBaseView: React.FC = () => {
     setUploading(true);
 
     try {
-      await uploadDocument(knowledgeBaseId, uploadFile);
-      message.success("文档上传成功");
-      await refreshDocuments();
-      onSuccess?.(file);
+      const resp = await uploadDocument(knowledgeBaseId, uploadFile);
+
+      if (resp.processing) {
+        message.info("文档上传成功，正在异步解析中...", 3);
+        pollingRef.current = window.setInterval(async () => {
+          try {
+            const statusResp = await getDocumentStatus(resp.documentId);
+            if (statusResp.status === "COMPLETED") {
+              stopPolling();
+              const durationSec =
+                statusResp.duration != null
+                  ? (statusResp.duration / 1000).toFixed(2)
+                  : "?";
+              message.success(
+                `文档异步解析完成，解析用时 ${durationSec} 秒`,
+              );
+              console.log(`文档解析用时: ${statusResp.duration} ms`);
+              await refreshDocuments();
+              setUploading(false);
+              onSuccess?.(file);
+            } else if (statusResp.status === "FAILED") {
+              stopPolling();
+              message.error(
+                statusResp.errorMessage || "文档异步解析失败",
+              );
+              await refreshDocuments();
+              setUploading(false);
+              onError?.(new Error(statusResp.errorMessage || "解析失败"));
+            }
+          } catch {
+            // 轮询失败静默处理
+          }
+        }, 2000);
+      } else {
+        const durationSec = (resp.duration / 1000).toFixed(2);
+        message.success(`文档上传并解析成功，解析用时 ${durationSec} 秒`);
+        console.log(`文档解析用时: ${resp.duration} ms`);
+        await refreshDocuments();
+        setUploading(false);
+        onSuccess?.(file);
+      }
     } catch (error) {
+      stopPolling();
       message.error(error instanceof Error ? error.message : "上传失败");
       onError?.(error as Error);
-    } finally {
       setUploading(false);
     }
   };
@@ -220,7 +269,7 @@ const KnowledgeBaseView: React.FC = () => {
               </Button>
             </Upload>
             <Text type="secondary" className="block mt-2 text-xs">
-              支持格式: MD / TXT / PDF
+              支持格式: MD / TXT / PDF（文件 ≥ 20MB 将异步解析，解析完成后自动提示）
             </Text>
           </Card>
         </div>

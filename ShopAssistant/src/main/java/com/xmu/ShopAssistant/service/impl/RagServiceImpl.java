@@ -85,7 +85,7 @@ public class RagServiceImpl implements RagService {
 
         List<ChunkBgeM3> vectorResults = similaritySearchChunks(kbId, query, candidateLimit);
         List<ChunkBgeM3> bm25Results = chunkBgeM3Mapper.bm25Search(kbId, query, candidateLimit);
-
+        //目前19个文档 采用双路召回 召回率从5/6 提升到了 1
         return fuseByRrf(vectorResults, bm25Results, safeLimit);
     }
 

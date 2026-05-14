@@ -34,6 +34,10 @@ import java.nio.file.Path;
 import java.time.LocalDateTime;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.concurrent.CompletableFuture;
+
+import com.xmu.ShopAssistant.model.response.DocumentStatusResponse;
+import org.springframework.scheduling.annotation.Async;
 
 @Service
 @AllArgsConstructor
@@ -43,6 +47,7 @@ public class DocumentFacadeServiceImpl implements DocumentFacadeService {
     private static final int TXT_CHUNK_OVERLAP = 120;
     private static final int PDF_CHUNK_SIZE = 1000;
     private static final int PDF_CHUNK_OVERLAP = 150;
+    private static final long LARGE_FILE_THRESHOLD = 20 * 1024 * 1024; // 20MB
 
     private final DocumentMapper documentMapper;
     private final DocumentConverter documentConverter;
@@ -167,10 +172,28 @@ public class DocumentFacadeServiceImpl implements DocumentFacadeService {
 
             log.info("文档上传成功: kbId={}, documentId={}, filename={}", kbId, documentId, originalFilename);
 
+            // 大文件异步解析，小文件同步解析
+            if (fileSize >= LARGE_FILE_THRESHOLD) {
+                setDocumentStatus(documentId, "PROCESSING", null, null);
+                processDocumentAsync(kbId, documentId, filePath, filetype);
+                log.info("大文件进入异步解析: documentId={}, size={}", documentId, fileSize);
+                return CreateDocumentResponse.builder()
+                        .documentId(documentId)
+                        .duration(0)
+                        .processing(true)
+                        .build();
+            }
+
+            long start = System.currentTimeMillis();
             processDocumentByType(kbId, documentId, filePath, filetype);
+            long duration = System.currentTimeMillis() - start;
+
+            log.info("文档解析完成: documentId={}, 用时 {} ms", documentId, duration);
 
             return CreateDocumentResponse.builder()
                     .documentId(documentId)
+                    .duration(duration)
+                    .processing(false)
                     .build();
         } catch (IOException e) {
             log.error("文件保存失败", e);
@@ -228,7 +251,6 @@ public class DocumentFacadeServiceImpl implements DocumentFacadeService {
                 log.info("Markdown 文档处理完成: documentId={}, 共生成 {} 个 chunks", documentId, chunkCount);
             }
         } catch (Exception e) {
-            log.error("处理 Markdown 文档失败: documentId={}", documentId, e);
             // 不抛出异常，避免影响文档上传流程
         }
     }
@@ -291,6 +313,70 @@ public class DocumentFacadeServiceImpl implements DocumentFacadeService {
             return;
         }
         log.warn("暂不支持的文件类型: {}", filetype);
+    }
+
+    @Async
+    public CompletableFuture<Void> processDocumentAsync(String kbId, String documentId, String filePath, String filetype) {
+        long start = System.currentTimeMillis();
+        try {
+            processDocumentByType(kbId, documentId, filePath, filetype);
+            long duration = System.currentTimeMillis() - start;
+            setDocumentStatus(documentId, "COMPLETED", duration, null);
+            log.info("异步文档解析完成: documentId={}, 用时 {} ms", documentId, duration);
+        } catch (Exception e) {
+            log.error("异步文档解析失败: documentId={}", documentId, e);
+            setDocumentStatus(documentId, "FAILED", null, e.getMessage());
+        }
+        return CompletableFuture.completedFuture(null);
+    }
+
+    @Override
+    public DocumentStatusResponse getDocumentStatus(String documentId) {
+        Document document = documentMapper.selectById(documentId);
+        if (document == null) {
+            throw new BizException("文档不存在: " + documentId);
+        }
+        try {
+            DocumentDTO documentDTO = documentConverter.toDTO(document);
+            DocumentDTO.MetaData metadata = documentDTO.getMetadata();
+            if (metadata == null || metadata.getStatus() == null) {
+                return DocumentStatusResponse.builder()
+                        .status("COMPLETED")
+                        .duration(0L)
+                        .build();
+            }
+            return DocumentStatusResponse.builder()
+                    .status(metadata.getStatus())
+                    .duration(metadata.getDuration())
+                    .errorMessage(metadata.getErrorMessage())
+                    .build();
+        } catch (Exception e) {
+            throw new BizException("获取文档状态失败: " + e.getMessage());
+        }
+    }
+
+    private void setDocumentStatus(String documentId, String status, Long duration, String errorMessage) {
+        try {
+            Document document = documentMapper.selectById(documentId);
+            if (document == null) return;
+
+            DocumentDTO dto = documentConverter.toDTO(document);
+            DocumentDTO.MetaData metadata = dto.getMetadata();
+            if (metadata == null) {
+                metadata = new DocumentDTO.MetaData();
+            }
+            metadata.setStatus(status);
+            metadata.setDuration(duration);
+            metadata.setErrorMessage(errorMessage);
+            dto.setMetadata(metadata);
+
+            Document updated = documentConverter.toEntity(dto);
+            updated.setId(documentId);
+            updated.setCreatedAt(document.getCreatedAt());
+            documentMapper.updateById(updated);
+        } catch (Exception e) {
+            log.error("更新文档状态失败: documentId={}, status={}", documentId, status, e);
+        }
     }
 
     private int persistChunksFromSections(String kbId, String documentId, List<MarkdownParserService.MarkdownSection> sections) {

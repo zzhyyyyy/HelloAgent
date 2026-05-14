@@ -309,6 +309,14 @@ export interface GetDocumentsResponse {
 
 export interface CreateDocumentResponse {
   documentId: string;
+  duration: number;
+  processing: boolean;
+}
+
+export interface DocumentStatusResponse {
+  status: string;
+  duration: number | null;
+  errorMessage: string | null;
 }
 
 /**
@@ -346,6 +354,15 @@ export async function uploadDocument(
   }
 
   return apiResponse.data;
+}
+
+/**
+ * 获取文档解析状态
+ */
+export async function getDocumentStatus(
+  documentId: string,
+): Promise<DocumentStatusResponse> {
+  return get<DocumentStatusResponse>(`/documents/${documentId}/status`);
 }
 
 /**

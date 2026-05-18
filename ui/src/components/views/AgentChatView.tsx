@@ -1,9 +1,12 @@
 import React, { useCallback, useEffect, useRef, useState } from "react";
 import { useParams, useNavigate, useLocation } from "react-router-dom";
-import { Tag, message as antdMessage } from "antd";
-import { TeamOutlined, UserOutlined } from "@ant-design/icons";
+import { Tag, Button, message as antdMessage } from "antd";
+import { TeamOutlined, UserOutlined, MoonOutlined, SunOutlined } from "@ant-design/icons";
 import AgentChatHistory from "./agentChatView/AgentChatHistory.tsx";
 import AgentChatInput from "./agentChatView/AgentChatInput.tsx";
+import RagEvaluationModal from "../modals/RagEvaluationModal.tsx";
+import EmbeddingModal from "../modals/EmbeddingModal.tsx";
+import { useTheme } from "../../contexts/ThemeContext.tsx";
 import {
   createChatMessage,
   createChatSession,
@@ -169,6 +172,7 @@ const AgentChatView: React.FC = () => {
   const [agentStatusType, setAgentStatusType] = useState<
     SseMessageType | undefined
   >(undefined);
+  const { theme, toggleTheme } = useTheme();
 
   useEffect(() => {
     // sse 连接处理, 不是对话消息不开连接
@@ -236,9 +240,9 @@ const AgentChatView: React.FC = () => {
   // 如果有 chatSessionId，显示正常的聊天界面
   return (
     <div className="flex flex-col h-full">
-      {/* 模式指示器 */}
+      {/* 顶部操作栏 */}
       {chatSessionId && (
-        <div className="flex justify-end px-16 pt-2">
+        <div className="flex items-center justify-end gap-2 px-16 pt-2">
           {multiAgentMode ? (
             <Tag icon={<TeamOutlined />} color="blue" className="text-xs">
               多 Agent 协作模式
@@ -248,6 +252,17 @@ const AgentChatView: React.FC = () => {
               单 Agent 模式
             </Tag>
           )}
+          <div className="border-r border-gray-200 h-4" />
+          <EmbeddingModal />
+          <RagEvaluationModal />
+          <div className="border-r border-gray-200 h-4" />
+          <Button
+            type="text"
+            size="small"
+            icon={theme === "dark" ? <SunOutlined /> : <MoonOutlined />}
+            onClick={toggleTheme}
+            className="text-gray-500 hover:text-blue-500"
+          />
         </div>
       )}
       <AgentChatHistory

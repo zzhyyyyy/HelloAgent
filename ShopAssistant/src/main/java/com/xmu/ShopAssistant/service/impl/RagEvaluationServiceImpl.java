@@ -52,7 +52,8 @@ public class RagEvaluationServiceImpl implements RagEvaluationService {
                 continue;
             }
             Set<String> relevantSet = new LinkedHashSet<>(evalCase.getRelevantDocIds());
-            List<ChunkBgeM3> retrievedChunks = ragService.similaritySearchChunks(evalCase.getKbId(), evalCase.getQuery(), topK);
+            // 多路召回检索 稠密向量Embedding + 稀疏向量BM25
+            List<ChunkBgeM3> retrievedChunks = ragService.hybridSearchChunks(evalCase.getKbId(), evalCase.getQuery(), topK);
             List<String> retrievedDocIds = toOrderedUniqueDocIds(retrievedChunks);
 
             double hit = hitAtK(retrievedDocIds, relevantSet);

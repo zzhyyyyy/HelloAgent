@@ -57,6 +57,17 @@ public class RagServiceImpl implements RagService {
     }
 
     @Override
+    public float[] embed(String text, int dimensions) {
+        float[] full = doEmbed(text);
+        if (dimensions <= 0 || dimensions >= full.length) {
+            return full;
+        }
+        float[] truncated = new float[dimensions];
+        System.arraycopy(full, 0, truncated, 0, dimensions);
+        return truncated;
+    }
+
+    @Override
     public List<String> similaritySearch(String kbId, String title) {
         List<ChunkBgeM3> chunks = similaritySearchChunks(kbId, title, DEFAULT_LIMIT);
         return chunks.stream().map(ChunkBgeM3::getContent).toList();
@@ -85,7 +96,7 @@ public class RagServiceImpl implements RagService {
 
         List<ChunkBgeM3> vectorResults = similaritySearchChunks(kbId, query, candidateLimit);
         List<ChunkBgeM3> bm25Results = chunkBgeM3Mapper.bm25Search(kbId, query, candidateLimit);
-        //目前19个文档 采用双路召回 召回率从5/6 提升到了 1
+        //目前19个文档 采用双路召回 召回率从4/6 提升到了 5/6
         return fuseByRrf(vectorResults, bm25Results, safeLimit);
     }
 

@@ -394,3 +394,51 @@ export async function getOptionalTools(): Promise<GetOptionalToolsResponse> {
   const tools = await get<ToolVO[]>("/tools");
   return { tools };
 }
+
+/**
+ * RAG 性能评估相关类型和接口
+ */
+export interface RagEvaluationCase {
+  kbId: string;
+  query: string;
+  relevantDocIds: string[];
+}
+
+export interface RagEvaluationRequest {
+  topK?: number;
+  cases: RagEvaluationCase[];
+}
+
+export interface RagEvaluationMetrics {
+  hitRateAtK: number;
+  avgRecallAtK: number;
+  mrrAtK: number;
+  ndcgAtK: number;
+}
+
+export interface RagEvaluationCaseResult {
+  kbId: string;
+  query: string;
+  retrievedDocIds: string[];
+  relevantDocIds: string[];
+  hitAtK: number;
+  recallAtK: number;
+  reciprocalRank: number;
+  ndcgAtK: number;
+}
+
+export interface RagEvaluationResponse {
+  topK: number;
+  totalCases: number;
+  metrics: RagEvaluationMetrics;
+  caseResults: RagEvaluationCaseResult[];
+}
+
+/**
+ * 执行 RAG 性能评估
+ */
+export async function evaluateRag(
+  request: RagEvaluationRequest,
+): Promise<RagEvaluationResponse> {
+  return post<RagEvaluationResponse>("/rag/evaluate", request);
+}

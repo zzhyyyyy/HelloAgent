@@ -31,3 +31,90 @@
 .scrollbar-hide::-webkit-scrollbar {
   display: none; /* Chrome, Safari and Opera */
 }
+
+/* ============ 白天/黑夜模式 ============ */
+:root {
+  --bg-primary: #ffffff;
+  --bg-secondary: #f5f5f5;
+  --bg-card: #ffffff;
+  --text-primary: #1f1f1f;
+  --text-secondary: #8c8c8c;
+  --border-color: #e8e8e8;
+}
+
+html.dark {
+  --bg-primary: #141414;
+  --bg-secondary: #1f1f1f;
+  --bg-card: #1f1f1f;
+  --text-primary: #e8e8e8;
+  --text-secondary: #8c8c8c;
+  --border-color: #303030;
+}
+
+html.dark body {
+  background-color: #141414;
+  color: #e8e8e8;
+}
+
+/* Ant Design 暗色覆盖 */
+html.dark .ant-card {
+  background-color: #1f1f1f !important;
+  border-color: #303030 !important;
+}
+
+html.dark .ant-table {
+  background-color: #1f1f1f !important;
+  color: #e8e8e8 !important;
+}
+
+html.dark .ant-table-thead > tr > th {
+  background-color: #141414 !important;
+  color: #e8e8e8 !important;
+  border-bottom-color: #303030 !important;
+}
+
+html.dark .ant-table-tbody > tr > td {
+  border-bottom-color: #303030 !important;
+}
+
+html.dark .ant-table-tbody > tr:hover > td {
+  background-color: #262626 !important;
+}
+
+html.dark .ant-tag {
+  background-color: #262626 !important;
+}
+
+html.dark .ant-select-dropdown {
+  background-color: #1f1f1f !important;
+}
+
+html.dark .ant-empty-description {
+  color: #8c8c8c !important;
+}
+
+/* 自定义 dark 工具类 */
+html.dark .bg-white {
+  background-color: var(--bg-card) !important;
+}
+
+html.dark .bg-gray-50,
+html.dark .bg-slate-50 {
+  background-color: var(--bg-secondary) !important;
+}
+
+html.dark .border-gray-200 {
+  border-color: var(--border-color) !important;
+}
+
+html.dark .text-gray-400,
+html.dark .text-gray-500,
+html.dark .text-gray-600 {
+  color: var(--text-secondary) !important;
+}
+
+html.dark .text-gray-700,
+html.dark .text-gray-800,
+html.dark .text-gray-900 {
+  color: var(--text-primary) !important;
+}

@@ -1,5 +1,5 @@
 import React, { useState, useMemo } from "react";
-import { Card, Space, Typography, Select, Switch, message as antdMessage } from "antd";
+import { Card, Space, Typography, Select, Switch, Button, message as antdMessage } from "antd";
 import {
   BulbOutlined,
   MessageOutlined,
@@ -7,10 +7,15 @@ import {
   DownOutlined,
   TeamOutlined,
   UserOutlined,
+  MoonOutlined,
+  SunOutlined,
 } from "@ant-design/icons";
 import { Sender } from "@ant-design/x";
 import { type AgentVO } from "../../../api/api.ts";
 import { getAgentEmoji } from "../../../utils";
+import { useTheme } from "../../../contexts/ThemeContext.tsx";
+import EmbeddingModal from "../../modals/EmbeddingModal.tsx";
+import RagEvaluationModal from "../../modals/RagEvaluationModal.tsx";
 
 const { Title, Text } = Typography;
 
@@ -29,6 +34,7 @@ const EmptyAgentChatView: React.FC<DefaultAgentChatViewProps> = ({
   multiAgentMode,
   onModeChange,
 }) => {
+  const { theme, toggleTheme } = useTheme();
   const [message, setMessage] = useState("");
   const [selectedAgentId, setSelectedAgentId] = useState<string | null>(null);
 
@@ -75,6 +81,9 @@ const EmptyAgentChatView: React.FC<DefaultAgentChatViewProps> = ({
               }))}
             />
             <div className="flex items-center gap-2">
+              <EmbeddingModal />
+              <RagEvaluationModal />
+              <div className="border-r border-gray-200 h-4 mx-1" />
               <UserOutlined className={`text-sm ${!multiAgentMode ? 'text-blue-500' : 'text-gray-400'}`} />
               <Switch
                 checked={multiAgentMode}
@@ -84,9 +93,14 @@ const EmptyAgentChatView: React.FC<DefaultAgentChatViewProps> = ({
                 unCheckedChildren={<UserOutlined />}
               />
               <TeamOutlined className={`text-sm ${multiAgentMode ? 'text-blue-500' : 'text-gray-400'}`} />
-              <span className="text-xs text-gray-500 ml-1">
-                {multiAgentMode ? "多Agent协作" : "单Agent"}
-              </span>
+              <div className="border-r border-gray-200 h-4 mx-1" />
+              <Button
+                type="text"
+                size="small"
+                icon={theme === "dark" ? <SunOutlined /> : <MoonOutlined />}
+                onClick={toggleTheme}
+                className="text-gray-500 hover:text-blue-500"
+              />
             </div>
           </div>
         </div>

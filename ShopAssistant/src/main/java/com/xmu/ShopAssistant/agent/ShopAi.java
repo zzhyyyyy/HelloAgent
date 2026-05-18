@@ -300,9 +300,8 @@ public class ShopAi {
                 - 在尚未完成全库检索前，不要调用 terminate
                 """.formatted(this.availableKbs);
 
-        // 将 thinkPrompt 通过 .user(thinkPrompt) 的方式构造进入 chatClient 中
-        // 既能让每次 messageList 的最后一条是 本条提示词，
-        // 又能够避免将 thinkPrompt 加入到聊天记录中
+        // 将 thinkPrompt 通过 .system() 注入 API 的 system 参数中
+        // 避免将 thinkPrompt 加入到 chatMemory 的聊天记录里
         Prompt prompt = Prompt.builder()
                 .chatOptions(this.chatOptions)
                 .messages(this.chatMemory.get(this.chatSessionId))

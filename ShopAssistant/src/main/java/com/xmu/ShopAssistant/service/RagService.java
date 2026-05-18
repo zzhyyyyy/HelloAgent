@@ -7,6 +7,8 @@ import java.util.List;
 public interface RagService {
     float[] embed(String text);
 
+    float[] embed(String text, int dimensions);
+
     List<String> similaritySearch(String kbId, String title);
 
     List<ChunkBgeM3> similaritySearchChunks(String kbId, String query, int limit);

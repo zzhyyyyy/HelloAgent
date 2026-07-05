@@ -118,11 +118,11 @@
                updated_at
         FROM chunk_bge_m3
         WHERE kb_id = CAST(#{kbId} AS uuid)
-          AND to_tsvector('simple', COALESCE(content, '') || ' ' || COALESCE(metadata::text, ''))
-              @@ plainto_tsquery('simple', #{query})
+          AND to_tsvector('jiebacfg', COALESCE(content, '') || ' ' || COALESCE(metadata::text, ''))
+              @@ plainto_tsquery('jiebacfg', #{query})
         ORDER BY ts_rank(
-                to_tsvector('simple', COALESCE(content, '') || ' ' || COALESCE(metadata::text, '')),
-                plainto_tsquery('simple', #{query})
+                to_tsvector('jiebacfg', COALESCE(content, '') || ' ' || COALESCE(metadata::text, '')),
+                plainto_tsquery('jiebacfg', #{query})
             ) DESC
         LIMIT #{limit}
         ]]>

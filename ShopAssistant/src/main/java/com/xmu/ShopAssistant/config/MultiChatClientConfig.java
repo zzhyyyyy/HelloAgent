@@ -7,6 +7,7 @@ import org.springframework.ai.zhipuai.ZhiPuAiChatModel;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.context.annotation.Primary;
+import org.springframework.boot.autoconfigure.condition.ConditionalOnBean;
 
 @Configuration
 public class MultiChatClientConfig {
@@ -18,6 +19,7 @@ public class MultiChatClientConfig {
 
     // zhipuai
     @Bean("glm-4.6")
+    @ConditionalOnBean(ZhiPuAiChatModel.class)
     public ChatClient zhiPuAiChatClient(ZhiPuAiChatModel zhiPuAiChatModel) {
         return ChatClient.create(zhiPuAiChatModel);
     }

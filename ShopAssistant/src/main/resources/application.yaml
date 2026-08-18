@@ -30,6 +30,11 @@ spring:
             enable: true
             required: true
   ai:
+    # Spring AI 1.1 通过该开关选择唯一自动装配的 ChatModel，避免未配置的供应商阻塞启动。
+    model:
+      chat: ${PRIMARY_CHAT_MODEL:deepseek}
+      embedding: none
+      image: none
     deepseek:
       api-key: ${DEEPSEEK_API_KEY:}
       base-url: https://api.deepseek.com

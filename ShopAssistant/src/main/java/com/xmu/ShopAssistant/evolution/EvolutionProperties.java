@@ -23,4 +23,10 @@ public class EvolutionProperties {
 
     /** 当前 Agent 主循环使用的 Prompt 版本，随轨迹一同记录。 */
     private String promptVersion = "think.system.v1";
+
+    /** 生成候选 Prompt/Skill 使用的模型。 */
+    private String candidateModel = "deepseek-chat";
+
+    /** 单个候选版本最多吸收的低分轨迹数，避免上下文无限膨胀。 */
+    private int maxCandidateTraces = 20;
 }

@@ -96,6 +96,8 @@ agent:
     low-score-threshold: 3.0
     max-query-limit: 200
     prompt-version: think.system.v1
+    candidate-model: deepseek-chat
+    max-candidate-traces: 20
   skills:
     dir: ${AGENT_SKILLS_DIR:./data/skills}
   tools:

@@ -3,6 +3,7 @@ package com.xmu.ShopAssistant.eval;
 import com.fasterxml.jackson.annotation.JsonInclude;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.xmu.ShopAssistant.config.ChatClientRegistry;
+import com.xmu.ShopAssistant.evolution.EvolutionTraceService;
 import com.xmu.ShopAssistant.message.SseMessage;
 import com.xmu.ShopAssistant.model.dto.ChatMessageDTO;
 import com.xmu.ShopAssistant.model.response.GetChatMessagesResponse;
@@ -42,17 +43,20 @@ public class AgentEvalService {
     private final ObjectMapper objectMapper;
     private final ChatMessageFacadeService chatMessageFacadeService;
     private final SseService sseService;
+    private final EvolutionTraceService evolutionTraceService;
 
     public AgentEvalService(ChatClientRegistry chatClientRegistry,
                             PromptRegistry promptRegistry,
                             ObjectMapper objectMapper,
                             ChatMessageFacadeService chatMessageFacadeService,
-                            SseService sseService) {
+                            SseService sseService,
+                            EvolutionTraceService evolutionTraceService) {
         this.chatClientRegistry = chatClientRegistry;
         this.promptRegistry = promptRegistry;
         this.objectMapper = objectMapper;
         this.chatMessageFacadeService = chatMessageFacadeService;
         this.sseService = sseService;
+        this.evolutionTraceService = evolutionTraceService;
     }
 
     // =================== Live 自动评估(每条 assistant 消息持久化后异步触发) ===================
@@ -112,6 +116,10 @@ public class AgentEvalService {
 
             // 5. 推 SSE
             pushEvalSse(sessionId, messageId, dtoScore);
+
+            // 6. 记录可回放的执行轨迹；失败由外层 catch 隔离，不影响主回答。
+            evolutionTraceService.capture(messageId, sessionId, question, actual,
+                    target.getMetadata() == null ? null : target.getMetadata().getUsage(), dtoScore);
 
             log.info("[LiveEval] messageId={} c={}/comp={}/rel={}",
                     messageId, dtoScore.getCorrectness(), dtoScore.getCompleteness(), dtoScore.getRelevance());

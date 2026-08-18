@@ -90,6 +90,12 @@ websearch:
 
 # ============== 工具沙箱与安全策略 ==============
 agent:
+  evolution:
+    enabled: true
+    storage-dir: ${AGENT_EVOLUTION_DIR:./data/evolution}
+    low-score-threshold: 3.0
+    max-query-limit: 200
+    prompt-version: think.system.v1
   skills:
     dir: ${AGENT_SKILLS_DIR:./data/skills}
   tools:

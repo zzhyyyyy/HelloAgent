@@ -98,6 +98,9 @@ agent:
     prompt-version: think.system.v1
     candidate-model: deepseek-chat
     max-candidate-traces: 20
+    judge-model: deepseek-chat
+    min-candidate-score: 3.2
+    min-improvement: 0.2
   skills:
     dir: ${AGENT_SKILLS_DIR:./data/skills}
   tools:

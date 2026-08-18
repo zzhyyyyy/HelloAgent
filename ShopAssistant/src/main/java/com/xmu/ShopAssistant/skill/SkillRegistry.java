@@ -141,6 +141,28 @@ public class SkillRegistry {
         return skills.get(name);
     }
 
+    /** 受控演化发布入口：校验完整 SKILL.md 后热加载，不直接改写源文件。 */
+    public synchronized void activate(String expectedName, String raw) {
+        if (raw == null || raw.isBlank()) throw new IllegalArgumentException("Skill 内容不能为空");
+        Path resourceDir = skillsDir.resolve(expectedName).normalize();
+        if (!resourceDir.startsWith(skillsDir)) throw new IllegalArgumentException("Skill 名称不合法");
+        Skill parsed = parse(raw, resourceDir);
+        if (parsed == null || !expectedName.equals(parsed.getName())) {
+            throw new IllegalArgumentException("候选 Skill 的 name 必须与目标名称一致");
+        }
+        skills.put(expectedName, parsed);
+        log.info("Skill 活动版本已切换: name={} chars={}", expectedName, raw.length());
+    }
+
+    /** 返回当前活动 Skill 的完整 SKILL.md。 */
+    public String raw(String name) {
+        Skill skill = get(name);
+        if (skill == null) throw new IllegalArgumentException("未找到 Skill: " + name);
+        return "---\nname: " + skill.getName() + "\ndescription: " + skill.getDescription()
+                + "\nallowedTools: [" + String.join(", ", skill.getAllowedTools()) + "]\n---\n\n"
+                + skill.getInstructions();
+    }
+
     /** 渐进式披露 · 第 1 层:目录(name + description),供 system prompt 使用。 */
     public String catalogForPrompt() {
         if (skills.isEmpty()) return "(当前无可用 Skill)";

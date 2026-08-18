@@ -14,6 +14,7 @@ import java.util.Collections;
 import java.util.HashMap;
 import java.util.Map;
 import java.util.Set;
+import java.util.concurrent.ConcurrentHashMap;
 
 /**
  * 集中管理所有 prompt 模板。
@@ -31,6 +32,7 @@ import java.util.Set;
 public class PromptRegistry {
 
     private final Map<String, String> templates = new HashMap<>();
+    private final Map<String, String> activeOverrides = new ConcurrentHashMap<>();
 
     @PostConstruct
     void load() {
@@ -64,12 +66,24 @@ public class PromptRegistry {
         return require(name);
     }
 
+    /** 受控演化发布入口：只覆盖内存中的活动版本，classpath 基线始终保留。 */
+    public void activate(String name, String content) {
+        if (!templates.containsKey(name)) {
+            throw new IllegalArgumentException("未找到 prompt 模板: " + name);
+        }
+        if (content == null || content.isBlank()) {
+            throw new IllegalArgumentException("Prompt 内容不能为空");
+        }
+        activeOverrides.put(name, content);
+        log.info("Prompt 活动版本已切换: name={} chars={}", name, content.length());
+    }
+
     public Set<String> names() {
         return Collections.unmodifiableSet(templates.keySet());
     }
 
     private String require(String name) {
-        String t = templates.get(name);
+        String t = activeOverrides.getOrDefault(name, templates.get(name));
         if (t == null) {
             throw new IllegalArgumentException("未找到 prompt 模板: " + name);
         }

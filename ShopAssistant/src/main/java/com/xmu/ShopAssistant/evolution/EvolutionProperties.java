@@ -29,4 +29,13 @@ public class EvolutionProperties {
 
     /** 单个候选版本最多吸收的低分轨迹数，避免上下文无限膨胀。 */
     private int maxCandidateTraces = 20;
+
+    /** 回放评估使用的 LLM-as-Judge 模型。 */
+    private String judgeModel = "deepseek-chat";
+
+    /** 候选平均分发布下限。 */
+    private double minCandidateScore = 3.2;
+
+    /** 相对历史基线的最低提升分。 */
+    private double minImprovement = 0.2;
 }

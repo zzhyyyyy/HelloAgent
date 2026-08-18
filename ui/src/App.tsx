@@ -3,6 +3,7 @@ import { ConfigProvider, theme as antTheme } from "antd";
 import JChatMindLayout from "./components/JChatMindLayout.tsx";
 import { ChatSessionsProvider } from "./contexts/ChatSessionsContext.tsx";
 import { ThemeProvider, useTheme } from "./contexts/ThemeContext.tsx";
+import ErrorBoundary from "./components/ErrorBoundary.tsx";
 
 function ThemedApp() {
   const { theme } = useTheme();
@@ -23,11 +24,13 @@ function ThemedApp() {
 
 function App() {
   return (
-    <BrowserRouter>
-      <ThemeProvider>
-        <ThemedApp />
-      </ThemeProvider>
-    </BrowserRouter>
+    <ErrorBoundary>
+      <BrowserRouter>
+        <ThemeProvider>
+          <ThemedApp />
+        </ThemeProvider>
+      </BrowserRouter>
+    </ErrorBoundary>
   );
 }
 

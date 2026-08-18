@@ -58,6 +58,13 @@ public class PdfServiceImpl implements PdfService {
                     ? createdAt
                     : LocalDateTime.now().format(DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss"));
 
+            // PDType0Font 遇到字体不支持的字符(emoji/罕见 unicode/特殊符号)会抛
+            // IllegalArgumentException,直接炸 PDF 生成。先把所有要写入的字符串过一遍 sanitize。
+            title = sanitizeForFont(title, font);
+            content = sanitizeForFont(content, font);
+            sessionTitle = sanitizeForFont(sessionTitle, font);
+            dateStr = sanitizeForFont(dateStr, font);
+
             List<String> bodyLines = wrapText(content, font, BODY_FONT_SIZE, CONTENT_WIDTH);
 
             float yStart = PAGE_HEIGHT - MARGIN;
@@ -242,6 +249,40 @@ public class PdfServiceImpl implements PdfService {
             log.debug("内置字体加载失败", e);
         }
         return null;
+    }
+
+    /**
+     * 把字体不支持的字符替换为 '?',避免 PDType0Font 在 showText/getStringWidth 时抛
+     * IllegalArgumentException("U+XXXX is not available in this font's encoding")。
+     * 常见触发场景:emoji、罕见 CJK、私用区字符、稀有数学符号等。
+     * 同时把控制字符(除了换行 \n)统一抹成空格,避免 PDF 渲染异常。
+     */
+    private String sanitizeForFont(String text, PDFont font) {
+        if (text == null || text.isEmpty()) return text;
+        StringBuilder sb = new StringBuilder(text.length());
+        int i = 0;
+        while (i < text.length()) {
+            int cp = text.codePointAt(i);
+            int charCount = Character.charCount(cp);
+            String s = new String(Character.toChars(cp));
+
+            // 控制字符:只保留换行,其它抹为空格
+            if (cp != '\n' && Character.isISOControl(cp)) {
+                sb.append(' ');
+                i += charCount;
+                continue;
+            }
+
+            // 探测字符是否在字体的编码表里
+            try {
+                font.getStringWidth(s);
+                sb.append(s);
+            } catch (Exception e) {
+                sb.append('?');
+            }
+            i += charCount;
+        }
+        return sb.toString();
     }
 
     /**

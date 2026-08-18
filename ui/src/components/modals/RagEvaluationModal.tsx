@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from "react";
+import React, { useState } from "react";
 import {
   Modal,
   InputNumber,
@@ -89,7 +89,7 @@ const RagEvaluationModal: React.FC = () => {
   const updateCase = (idx: number, field: keyof RagEvaluationCase, value: unknown) => {
     setEvalCases((prev) => {
       const updated = [...prev];
-      (updated[idx] as Record<string, unknown>)[field] = value;
+      (updated[idx] as unknown as Record<string, unknown>)[field] = value;
       return updated;
     });
   };

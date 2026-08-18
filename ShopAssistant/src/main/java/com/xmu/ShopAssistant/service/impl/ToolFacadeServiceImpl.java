@@ -3,6 +3,7 @@ package com.xmu.ShopAssistant.service.impl;
 import com.xmu.ShopAssistant.agent.tools.Tool;
 import com.xmu.ShopAssistant.agent.tools.ToolType;
 import com.xmu.ShopAssistant.service.ToolFacadeService;
+import jakarta.annotation.PostConstruct;
 import lombok.AllArgsConstructor;
 import org.springframework.stereotype.Service;
 
@@ -33,5 +34,13 @@ public class ToolFacadeServiceImpl implements ToolFacadeService {
         return tools.stream()
                 .filter(tool -> tool.getType().equals(type))
                 .toList();
+    }
+    @PostConstruct  // 在依赖注入完成后执行
+    public void init() {
+        System.out.println("共注入 " + tools.size() + " 个 Tool:");
+        tools.forEach(tool -> {
+            System.out.println(" - " + tool.getClass().getSimpleName()
+                    + " (类型: " + tool.getType() + ")");
+        });
     }
 }

@@ -39,7 +39,8 @@ public class KnowledgeTools implements Tool {
 
     @org.springframework.ai.tool.annotation.Tool(
             name = "KnowledgeTool",
-            description = "从知识库执行混合检索（BM25+向量）。参数：kbsId（知识库ID；若传ALL或留空则自动检索所有知识库）和query（查询文本）。"
+            description = "从知识库执行混合检索(BM25+向量)。参数:kbsId(知识库ID;若传ALL或留空则自动检索所有知识库)和query(查询文本)。" +
+                    "返回的每个片段会带 [N] 数字编号(全局唯一),你在最终回答中必须用 [N] 形式引用对应片段。"
     )
     public String knowledgeQuery(String kbsId, String query) {
         if (!StringUtils.hasText(query)) {
@@ -52,9 +53,16 @@ public class KnowledgeTools implements Tool {
 
         List<String> strings = ragService.hybridSearch(kbsId, query, 3);
         if (strings == null || strings.isEmpty()) {
-            return "[KB " + kbsId + "] 无匹配结果（混合检索）";
+            return "[KB " + kbsId + "] 无匹配结果(混合检索)";
         }
-        return "[KB " + kbsId + "]\n" + String.join("\n", strings);
+        StringBuilder sb = new StringBuilder();
+        int idx = 1;
+        for (String chunk : strings) {
+            sb.append("[").append(idx++).append("] (kb=").append(kbsId).append(")\n")
+                    .append(chunk).append("\n\n");
+        }
+        sb.append("[引用规则] 你在最终回答中务必用 [N] 引用以上对应片段编号。");
+        return sb.toString().trim();
     }
 
     @org.springframework.ai.tool.annotation.Tool(
@@ -81,18 +89,24 @@ public class KnowledgeTools implements Tool {
             }
         }
 
-        List<String> blocks = new ArrayList<>();
+        StringBuilder sb = new StringBuilder();
+        int idx = 1;
+        boolean any = false;
         for (String id : kbIds) {
             List<String> hits = ragService.hybridSearch(id, query, 3);
             if (hits == null || hits.isEmpty()) {
                 continue;
             }
-            blocks.add("[KB " + id + "]\n" + String.join("\n", hits));
+            any = true;
+            for (String chunk : hits) {
+                sb.append("[").append(idx++).append("] (kb=").append(id).append(")\n")
+                        .append(chunk).append("\n\n");
+            }
         }
-
-        if (blocks.isEmpty()) {
+        if (!any) {
             return "所有知识库均未检索到相关结果";
         }
-        return String.join("\n\n", blocks);
+        sb.append("[引用规则] 你在最终回答中务必用 [N] 引用以上对应片段编号。");
+        return sb.toString().trim();
     }
 }

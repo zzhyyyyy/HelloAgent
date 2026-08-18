@@ -1,20 +1,26 @@
+logging:
+  level:
+    # MCP 客户端调试:启动时看到 stdio 子进程 spawn / handshake / 工具列表
+    org.springframework.ai.mcp: DEBUG
+    io.modelcontextprotocol: INFO
+
 spring:
   application:
     name: ShopAssistant
   datasource:
-    url: jdbc:postgresql://8.163.27.12:5432/jchatmind
-    username: muzhiyuan
-    password: 20031121zzh.
+    url: ${DB_URL:jdbc:postgresql://8.163.27.12:5432/jchatmind}
+    username: ${DB_USERNAME:muzhiyuan}
+    password: ${DB_PASSWORD:}
     driver-class-name: org.postgresql.Driver
   servlet:
     multipart:
-      max-file-size: 10MB
-      max-request-size: 10MB
+      max-file-size: 300MB
+      max-request-size: 300MB
   mail:
     host: smtp.qq.com
     port: 587
-    username: 2685922758@qq.com
-    password: iihshbccvrrxddgc # 邮箱授权码
+    username: ${MAIL_USERNAME:2685922758@qq.com}
+    password: ${MAIL_PASSWORD:}
     default-encoding: UTF-8
     properties:
       mail:
@@ -25,17 +31,46 @@ spring:
             required: true
   ai:
     deepseek:
-      api-key: sk-4d2053b873964c4283d6af82ccba4743
+      api-key: ${DEEPSEEK_API_KEY:}
       base-url: https://api.deepseek.com
       chat:
         options:
           model: deepseek-chat
     zhipuai:
-      api-key: your-api-key
+      api-key: ${ZHIPUAI_API_KEY:}
       base-url: https://open.bigmodel.cn/api/paas
       chat:
         options:
           model: glm-4.6
+    # ============== MCP (Model Context Protocol) ==============
+    # 所有 MCP server 暴露的 tool 会自动注册为 Spring AI ToolCallback,
+    # ShopAiFactory 会把它们合进 agent 的可用工具集 —— ReAct 主循环不用改。
+    #
+    # 当前接入:AnySearch (anysearch-ai/anysearch-mcp-server)
+    #   提供 search / batch_search / extract / get_sub_domains 四个工具
+    #   匿名模式即可使用(低速率),配 API key 可提速:
+    #     1. 注册 https://anysearch.com/console/api-keys 拿 key
+    #     2. 设置环境变量 ANYSEARCH_API_KEY,启动时自动注入
+    #   底层走 npx + mcp-remote 把 Streamable HTTP 适配到 stdio,需要本机有 Node.js。
+    #
+    # ⚠️ Windows:command 必须用 npx.cmd(Java ProcessBuilder 不会自动补 .cmd 后缀)
+    #    Linux/macOS:改回 npx 即可
+    mcp:
+      client:
+        enabled: true
+        request-timeout: 60s              # 首次启动 npx 拉 mcp-remote 包慢,放宽
+        stdio:
+          connections:
+            anysearch:
+              command: npx.cmd
+              args:
+                - "-y"
+                - "mcp-remote"
+                - "https://api.anysearch.com/mcp"
+                # 鉴权模式(可选):取消下面两行注释即用 API key,
+                # 同时把 ANYSEARCH_API_KEY 配到环境变量
+                # - "--header"
+                # - "Authorization: Bearer ${ANYSEARCH_API_KEY}"
 mybatis:
   type-aliases-package: com.xmu.ShopAssistant.model.entity
   mapper-locations: classpath:mapper/*.xml
@@ -49,3 +84,52 @@ pdf:
   font:
     path: C:/Windows/Fonts/msyh.ttc   # 中文字体路径，不配置则自动探测系统字体
     ttc-index: 0                        # TTC 字体集合索引（默认 0）
+
+websearch:
+  max-results: 5                        # 互联网搜索返回的最大结果数
+
+# ============== 工具沙箱与安全策略 ==============
+agent:
+  skills:
+    dir: ${AGENT_SKILLS_DIR:./data/skills}
+  tools:
+    security:
+      audit-enabled: true               # 是否打开 [ToolAudit] 结构化日志
+
+      database:
+        max-rows: 200                   # SQL 单次返回最大行数(超过自动 LIMIT/截断)
+        query-timeout-seconds: 5        # 单条查询超时(秒)
+        permits-per-minute: 30          # 每分钟最多 30 次查询
+        forbidden-keywords:             # SQL 关键词黑名单(词边界匹配)
+          - INSERT
+          - UPDATE
+          - DELETE
+          - DROP
+          - TRUNCATE
+          - ALTER
+          - CREATE
+          - GRANT
+          - REVOKE
+          - MERGE
+          - EXEC
+          - CALL
+          - VACUUM
+          - COPY
+
+      email:
+        # 收件人 allowlist:空列表 = 拒绝全部发信。glob 通配:user@example.com 或 *@example.com
+        recipient-allowlist: [2685922758@qq.com]
+        max-subject-length: 200
+        max-body-length: 5000
+        permits-per-minute: 3
+        daily-cap: 20
+
+      filesystem:
+        sandbox-dir: ./data/sandbox     # 所有读写都被限制在此目录内
+        max-read-bytes: 262144          # 单文件最大读取 256KB
+        write-enabled: false            # 写入/追加/创建目录默认禁用
+        delete-enabled: false           # 删除默认禁用
+        permits-per-minute: 60
+        filename-denylist:              # 命中即拒(应用于读/写/列)
+          - "(?i).+\\.(env|key|pem|p12|jks|crt|secret)$"
+          - "^\\..*"

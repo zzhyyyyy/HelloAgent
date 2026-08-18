@@ -81,6 +81,7 @@ public class SessionSummaryServiceImpl implements SessionSummaryService {
             }
 
             ChatSessionDTO.MetaData updated = ChatSessionDTO.MetaData.builder()
+                    .mode(metadata.getMode())
                     .sessionSummary(newSummary)
                     .summarizedMessageCount(allMessages.size())
                     .summaryUpdatedAt(LocalDateTime.now())

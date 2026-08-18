@@ -7,6 +7,8 @@ import com.xmu.ShopAssistant.config.ChatClientRegistry;
 import com.xmu.ShopAssistant.converter.AgentConverter;
 import com.xmu.ShopAssistant.converter.ChatMessageConverter;
 import com.xmu.ShopAssistant.converter.KnowledgeBaseConverter;
+import com.xmu.ShopAssistant.eval.AgentEvalService;
+import com.xmu.ShopAssistant.guardrails.GuardrailsService;
 import com.xmu.ShopAssistant.mapper.AgentMapper;
 import com.xmu.ShopAssistant.mapper.KnowledgeBaseMapper;
 import com.xmu.ShopAssistant.model.dto.AgentDTO;
@@ -14,7 +16,9 @@ import com.xmu.ShopAssistant.model.dto.ChatMessageDTO;
 import com.xmu.ShopAssistant.model.dto.KnowledgeBaseDTO;
 import com.xmu.ShopAssistant.model.entity.Agent;
 import com.xmu.ShopAssistant.model.entity.KnowledgeBase;
+import com.xmu.ShopAssistant.prompt.PromptRegistry;
 import com.xmu.ShopAssistant.service.AgentMemoryService;
+import com.xmu.ShopAssistant.skill.SkillRegistry;
 import com.xmu.ShopAssistant.service.ChatMessageFacadeService;
 import com.xmu.ShopAssistant.service.SessionSummaryService;
 import com.xmu.ShopAssistant.service.SpecialistRunner;
@@ -25,8 +29,10 @@ import org.slf4j.LoggerFactory;
 import org.springframework.ai.chat.client.ChatClient;
 import org.springframework.ai.chat.messages.*;
 import org.springframework.ai.tool.ToolCallback;
+import org.springframework.ai.tool.ToolCallbackProvider;
 import org.springframework.ai.tool.method.MethodToolCallbackProvider;
 import org.springframework.aop.support.AopUtils;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Component;
 import org.springframework.util.StringUtils;
 
@@ -51,6 +57,12 @@ public class ShopAiFactory {
     private final AgentMemoryService agentMemoryService;
     private final SessionSummaryService sessionSummaryService;
     private final SpecialistRunner specialistRunner;
+    private final PromptRegistry promptRegistry;
+    private final SkillRegistry skillRegistry;
+    /** 外部 ToolCallback 供应者(MCP server / 自定义集成等),Spring 自动注入所有实现 */
+    private final List<ToolCallbackProvider> externalToolProviders;
+    private final GuardrailsService guardrailsService;
+    private final AgentEvalService agentEvalService;
 
     // 运行时 Agent 配置
     private AgentDTO agentConfig;
@@ -67,7 +79,12 @@ public class ShopAiFactory {
             ChatMessageConverter chatMessageConverter,
             AgentMemoryService agentMemoryService,
             SessionSummaryService sessionSummaryService,
-            SpecialistRunner specialistRunner
+            SpecialistRunner specialistRunner,
+            PromptRegistry promptRegistry,
+            SkillRegistry skillRegistry,
+            @Autowired(required = false) List<ToolCallbackProvider> externalToolProviders,
+            GuardrailsService guardrailsService,
+            AgentEvalService agentEvalService
     ) {
         this.chatClientRegistry = chatClientRegistry;
         this.sseService = sseService;
@@ -81,6 +98,24 @@ public class ShopAiFactory {
         this.agentMemoryService = agentMemoryService;
         this.sessionSummaryService = sessionSummaryService;
         this.specialistRunner = specialistRunner;
+        this.promptRegistry = promptRegistry;
+        this.skillRegistry = skillRegistry;
+        this.externalToolProviders = externalToolProviders == null ? List.of() : externalToolProviders;
+        this.guardrailsService = guardrailsService;
+        this.agentEvalService = agentEvalService;
+    }
+
+    /** 渐进式披露 · 第 1 层:在 system prompt 末尾追加 Skill 目录。 */
+    private String mergeSystemPromptWithSkillCatalog(String systemPrompt) {
+        if (skillRegistry == null || skillRegistry.all().isEmpty()) {
+            return systemPrompt;
+        }
+        String catalog = """
+
+                【可用 Skill 目录】(渐进式披露:仅看到 name+简介;如认为某 skill 适合当前任务,调用 useSkill(name) 获取完整流程)
+                %s
+                """.formatted(skillRegistry.catalogForPrompt());
+        return systemPrompt == null || systemPrompt.isBlank() ? catalog : systemPrompt + "\n" + catalog;
     }
 
     private Agent loadAgent(String agentId) {
@@ -242,6 +277,7 @@ public class ShopAiFactory {
 
     private List<ToolCallback> buildToolCallbacks(List<Tool> runtimeTools) {
         List<ToolCallback> callbacks = new ArrayList<>();
+        // 1) 来自 @Component Tool bean(项目内置)
         for (Tool tool : runtimeTools) {
             Object target = resolveToolTarget(tool);
             ToolCallback[] toolCallbacks = MethodToolCallbackProvider.builder()
@@ -249,6 +285,15 @@ public class ShopAiFactory {
                     .build()
                     .getToolCallbacks();
             callbacks.addAll(Arrays.asList(toolCallbacks));
+        }
+        // 2) 来自外部 ToolCallbackProvider(MCP server / 自定义集成等)
+        for (ToolCallbackProvider provider : externalToolProviders) {
+            ToolCallback[] arr = provider.getToolCallbacks();
+            if (arr != null && arr.length > 0) {
+                callbacks.addAll(Arrays.asList(arr));
+                log.info("已合并外部 ToolCallbackProvider: provider={} tools={}",
+                        provider.getClass().getSimpleName(), arr.length);
+            }
         }
         return callbacks;
     }
@@ -276,6 +321,7 @@ public class ShopAiFactory {
             throw new IllegalStateException("未找到对应的 ChatClient: " + agent.getModel());
         }
         String mergedSystemPrompt = mergeSystemPromptWithLongTermMemory(agent.getSystemPrompt(), agent.getId());
+        mergedSystemPrompt = mergeSystemPromptWithSkillCatalog(mergedSystemPrompt);
         return new ShopAi(
                 agent.getId(),
                 agent.getName(),
@@ -289,7 +335,10 @@ public class ShopAiFactory {
                 chatSessionId,
                 sseService,
                 chatMessageFacadeService,
-                chatMessageConverter
+                chatMessageConverter,
+                promptRegistry,
+                guardrailsService,
+                agentEvalService
         );
     }
 
@@ -375,6 +424,7 @@ public class ShopAiFactory {
         }
 
         String mergedPrompt = mergeSystemPromptWithLongTermMemory(supervisorSystemPrompt, agent.getId());
+        mergedPrompt = mergeSystemPromptWithSkillCatalog(mergedPrompt);
 
         int messageLength = agentConfig.getChatOptions() != null && agentConfig.getChatOptions().getMessageLength() != null
                 ? agentConfig.getChatOptions().getMessageLength()
@@ -393,7 +443,10 @@ public class ShopAiFactory {
                 chatSessionId,
                 sseService,
                 chatMessageFacadeService,
-                chatMessageConverter
+                chatMessageConverter,
+                promptRegistry,
+                guardrailsService,
+                agentEvalService
         );
         shopAi.setAgentRole("supervisor");
         return shopAi;
@@ -419,36 +472,17 @@ public class ShopAiFactory {
         }
 
         String kbsInfo = knowledgeBases != null && !knowledgeBases.isEmpty()
-                ? "你拥有的知识库列表：\n" + knowledgeBases.stream()
+                ? "你拥有的知识库列表:\n" + knowledgeBases.stream()
                     .map(kb -> "- " + kb.getId() + ": " + kb.getName())
                     .collect(java.util.stream.Collectors.joining("\n"))
                 : "当前没有可用的知识库。";
 
-        return """
-                你是 ShopAssistant 的「任务协调员（Supervisor）」，负责协调多个专业 Agent 协作解决用户问题。
-
-                【你的职责】
-                1. 分析用户的复杂问题，将其拆解为若干子任务
-                2. 使用 DelegateToSpecialist 工具将子任务委派给最合适的 Specialist Agent
-                3. 收集所有 Specialist 的返回结果，综合整理后给出最终回答
-                4. 对于简单问题，你也可以直接使用现有工具回答，无需委派
-
-                【可用 Specialist Agent】
-                %s
-
-                【委派规则】
-                - 每个子任务应尽量清晰、完整地描述上下文和目标
-                - 可以并行委派多个 Specialist（依次调用工具）
-                - Specialist 会独立执行任务并使用自己的工具
-                - 收到 Specialist 返回结果后，需要整理汇总
-
-                【知识库】
-                %s
-
-                【注意事项】
-                - 用户的问题可能涉及多个领域，合理拆分任务
-                - 如果 Specialist 返回的信息不足，可以追问或重新委派
-                - 最终回答应整合所有 Specialist 的结果，给出完整的答案
-                """.formatted(specialistList, kbsInfo);
+        return promptRegistry.render(
+                "supervisor.system.v1",
+                java.util.Map.of(
+                        "specialists", specialistList.toString(),
+                        "kbsInfo", kbsInfo
+                )
+        );
     }
 }

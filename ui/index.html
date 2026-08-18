@@ -3,7 +3,21 @@
 <head>
     <meta charset="UTF-8"/>
     <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
-    <title>ShopAssistant</title>
+    <meta name="theme-color" content="#6366f1" media="(prefers-color-scheme: light)"/>
+    <meta name="theme-color" content="#0b0b0f" media="(prefers-color-scheme: dark)"/>
+    <title>HelloAgent · 智能体工作台</title>
+    <script>
+      (function () {
+        try {
+          var saved = localStorage.getItem("theme");
+          if (saved === "dark") document.documentElement.classList.add("dark");
+        } catch (e) {}
+      })();
+    </script>
+    <style>
+      html, body { background-color: #f7f7f9; }
+      html.dark, html.dark body { background-color: #0b0b0f; }
+    </style>
 </head>
 <body>
 <div id="root"></div>

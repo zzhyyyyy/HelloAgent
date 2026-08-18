@@ -1,12 +1,11 @@
-import React, { useCallback, useEffect, useRef, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useParams, useNavigate, useLocation } from "react-router-dom";
-import { Tag, Button, message as antdMessage } from "antd";
-import { TeamOutlined, UserOutlined, MoonOutlined, SunOutlined } from "@ant-design/icons";
+import { Tag, message as antdMessage } from "antd";
+import { TeamOutlined, UserOutlined } from "@ant-design/icons";
 import AgentChatHistory from "./agentChatView/AgentChatHistory.tsx";
 import AgentChatInput from "./agentChatView/AgentChatInput.tsx";
 import RagEvaluationModal from "../modals/RagEvaluationModal.tsx";
 import EmbeddingModal from "../modals/EmbeddingModal.tsx";
-import { useTheme } from "../../contexts/ThemeContext.tsx";
 import {
   createChatMessage,
   createChatSession,
@@ -41,6 +40,7 @@ const AgentChatView: React.FC = () => {
   };
 
   const [agentId, setAgentId] = useState<string>("");
+  const [sessionTitle, setSessionTitle] = useState<string>("");
   const [multiAgentMode, setMultiAgentMode] = useState(false);
   const initMessageKeyRef = useRef<string | null>(null);
 
@@ -54,6 +54,8 @@ const AgentChatView: React.FC = () => {
     const fetchData = async () => {
       const sessionResp = await getChatSession(chatSessionId);
       setAgentId(sessionResp.chatSession.agentId);
+      const title = (sessionResp.chatSession as { title?: string }).title;
+      if (title) setSessionTitle(title);
       if (sessionResp.chatSession.mode === "MULTI") {
         setMultiAgentMode(true);
       }
@@ -73,12 +75,9 @@ const AgentChatView: React.FC = () => {
     selectedAgentId?: string,
     mode?: string,
   ) => {
-    // 处理 Sender 组件可能传递的不同格式
     const message = typeof value === "string" ? value : value.text;
-
     if (!message || !message.trim()) return;
 
-    // 如果没有 chatSessionId，创建新会话
     if (!chatSessionId) {
       const nextAgentId = selectedAgentId ?? agentId;
 
@@ -93,9 +92,7 @@ const AgentChatView: React.FC = () => {
           title: message.slice(0, 20),
           mode: mode ?? (multiAgentMode ? "MULTI" : "SINGLE"),
         });
-        // 刷新聊天会话列表
         await refreshChatSessions();
-        // 导航到新创建的会话
         navigate(`/chat/${response.chatSessionId}`, {
           replace: true,
           state: {
@@ -106,7 +103,7 @@ const AgentChatView: React.FC = () => {
         });
       } catch (error) {
         console.error("创建聊天会话失败:", error);
-        antdMessage.error("创建聊天会话失败，请重试");
+        antdMessage.error("创建聊天会话失败,请重试");
       } finally {
         setLoading(false);
       }
@@ -151,7 +148,7 @@ const AgentChatView: React.FC = () => {
         initMessageKeyRef.current = null;
         console.error("发送初始消息失败:", error);
         if (!cancelled) {
-          antdMessage.error("发送消息失败，请重试");
+          antdMessage.error("发送消息失败,请重试");
         }
       } finally {
         if (!cancelled) {
@@ -172,13 +169,9 @@ const AgentChatView: React.FC = () => {
   const [agentStatusType, setAgentStatusType] = useState<
     SseMessageType | undefined
   >(undefined);
-  const { theme, toggleTheme } = useTheme();
 
   useEffect(() => {
-    // sse 连接处理, 不是对话消息不开连接
-    if (!chatSessionId) {
-      return;
-    }
+    if (!chatSessionId) return;
     const es = new EventSource(`${SSE_BASE_URL}/connect/${chatSessionId}`);
     es.onmessage = (event) => {
       console.log("Received message:", event.data);
@@ -188,29 +181,71 @@ const AgentChatView: React.FC = () => {
     };
 
     es.addEventListener("message", (event) => {
-      // 解析 JSON
-      const message = JSON.parse(event.data) as SseMessage;
-      if (message.type === "AI_GENERATED_CONTENT") {
-        // 将 AI 生成的内容存到 messages 中
-        addMessage(message.payload.message);
-      } else if (message.type === "AI_PLANNING") {
-        setDisplayAgentStatus(true);
-        setAgentStatusText(message.payload.statusText);
-        setAgentStatusType("AI_PLANNING");
-      } else if (message.type === "AI_THINKING") {
-        setDisplayAgentStatus(true);
-        setAgentStatusText(message.payload.statusText);
-        setAgentStatusType("AI_THINKING");
-      } else if (message.type === "AI_EXECUTING") {
-        setDisplayAgentStatus(true);
-        setAgentStatusText(message.payload.statusText);
-        setAgentStatusType("AI_EXECUTING");
-      } else if (message.type === "AI_DONE") {
-        setDisplayAgentStatus(false);
-        setAgentStatusText("");
-        setAgentStatusType(undefined);
-      } else {
-        throw new Error(`Unknown message type: ${message.type}`);
+      // 全局 try/catch:单条 SSE 消息异常不应该拖垮整个 React 树
+      try {
+        const message = JSON.parse(event.data) as SseMessage;
+        if (message.type === "AI_GENERATED_CONTENT") {
+          addMessage(message.payload.message);
+        } else if (message.type === "AI_STREAM_CHUNK") {
+          // 流式 chunk:用 streamId(chunk.id)定位 placeholder。
+          // done=true 时把 id 换成持久化后的 DB id,PDF 下载链接才能正确工作。
+          // 由于 done=true 是该 think 迭代的最后一帧,后续不会再有 chunk 引用旧 streamId,swap 是安全的。
+          // 配合根 ErrorBoundary,即便 XMarkdown 重挂载意外抛错也只会显示局部回退。
+          const chunk = message.payload.message;
+          if (!chunk || !chunk.id) return;
+          const done = message.payload.done;
+          const persistedId = message.metadata?.chatMessageId;
+          const finalId = done && persistedId ? persistedId : chunk.id;
+          setMessages((prev) => {
+            const idx = prev.findIndex(
+              (m) => m.id === chunk.id || m.id === finalId,
+            );
+            if (idx === -1) {
+              return [...prev, { ...chunk, id: finalId }];
+            }
+            const next = [...prev];
+            next[idx] = { ...chunk, id: finalId };
+            return next;
+          });
+        } else if (message.type === "AI_EVAL_SCORE") {
+          // Agent 持久化后,后端 LLM-as-Judge 异步评分回传 —— 合并到对应消息的 metadata.evalScore
+          const messageId = message.metadata?.chatMessageId;
+          const score = message.payload?.message?.metadata?.evalScore;
+          if (!messageId || !score) return;
+          setMessages((prev) => {
+            const idx = prev.findIndex((m) => m.id === messageId);
+            if (idx === -1) return prev;
+            const next = [...prev];
+            next[idx] = {
+              ...next[idx],
+              metadata: {
+                ...(next[idx].metadata ?? {}),
+                evalScore: score,
+              },
+            };
+            return next;
+          });
+        } else if (message.type === "AI_PLANNING") {
+          setDisplayAgentStatus(true);
+          setAgentStatusText(message.payload.statusText);
+          setAgentStatusType("AI_PLANNING");
+        } else if (message.type === "AI_THINKING") {
+          setDisplayAgentStatus(true);
+          setAgentStatusText(message.payload.statusText);
+          setAgentStatusType("AI_THINKING");
+        } else if (message.type === "AI_EXECUTING") {
+          setDisplayAgentStatus(true);
+          setAgentStatusText(message.payload.statusText);
+          setAgentStatusType("AI_EXECUTING");
+        } else if (message.type === "AI_DONE") {
+          setDisplayAgentStatus(false);
+          setAgentStatusText("");
+          setAgentStatusType(undefined);
+        } else {
+          console.warn("Unknown SSE message type:", message.type);
+        }
+      } catch (err) {
+        console.error("SSE message handler error (suppressed):", err, "raw:", event.data);
       }
     });
 
@@ -224,7 +259,21 @@ const AgentChatView: React.FC = () => {
     };
   }, [chatSessionId]);
 
-  // 如果没有 chatSessionId，显示提示界面
+  // ⚠️ 所有 hook 必须在条件 return 之前调用,否则前后 render 的 hook 数量不一致会触发
+  // "Rendered fewer hooks than expected"。
+  const sessionTokens = useMemo(() => {
+    let prompt = 0;
+    let completion = 0;
+    for (const m of messages) {
+      const u = m.metadata?.usage;
+      if (u) {
+        prompt += u.promptTokens ?? 0;
+        completion += u.completionTokens ?? 0;
+      }
+    }
+    return { prompt, completion, total: prompt + completion };
+  }, [messages]);
+
   if (!chatSessionId) {
     return (
       <EmptyAgentChatView
@@ -237,42 +286,64 @@ const AgentChatView: React.FC = () => {
     );
   }
 
-  // 如果有 chatSessionId，显示正常的聊天界面
   return (
     <div className="flex flex-col h-full">
-      {/* 顶部操作栏 */}
-      {chatSessionId && (
-        <div className="flex items-center justify-end gap-2 px-16 pt-2">
+      {/* 顶部:sticky glass bar */}
+      <div className="h-14 flex items-center justify-between px-6 glass border-b border-hairline shrink-0">
+        <div className="flex items-center gap-3 min-w-0">
+          <div className="text-[15px] font-semibold text-strong truncate max-w-[420px]">
+            {sessionTitle || "新会话"}
+          </div>
           {multiAgentMode ? (
-            <Tag icon={<TeamOutlined />} color="blue" className="text-xs">
-              多 Agent 协作模式
+            <Tag
+              icon={<TeamOutlined />}
+              color="purple"
+              bordered={false}
+              className="text-xs"
+            >
+              多 Agent 协作
             </Tag>
           ) : (
-            <Tag icon={<UserOutlined />} color="default" className="text-xs">
-              单 Agent 模式
+            <Tag
+              icon={<UserOutlined />}
+              color="default"
+              bordered={false}
+              className="text-xs"
+            >
+              单 Agent
             </Tag>
           )}
-          <div className="border-r border-gray-200 h-4" />
+          {sessionTokens.total > 0 && (
+            <Tag
+              bordered={false}
+              color="blue"
+              className="text-xs font-mono"
+              title={`本会话累计 token:prompt ${sessionTokens.prompt} + completion ${sessionTokens.completion} = ${sessionTokens.total}`}
+            >
+              ↑{sessionTokens.prompt} · ↓{sessionTokens.completion}
+            </Tag>
+          )}
+        </div>
+        <div className="flex items-center gap-2">
           <EmbeddingModal />
           <RagEvaluationModal />
-          <div className="border-r border-gray-200 h-4" />
-          <Button
-            type="text"
-            size="small"
-            icon={theme === "dark" ? <SunOutlined /> : <MoonOutlined />}
-            onClick={toggleTheme}
-            className="text-gray-500 hover:text-blue-500"
-          />
         </div>
-      )}
+      </div>
+
       <AgentChatHistory
         messages={messages}
         displayAgentStatus={displayAgentStatus}
         agentStatusText={agentStatusText}
         agentStatusType={agentStatusType}
       />
-      <div className="border-t border-gray-200 p-4 bg-white">
-        <AgentChatInput onSend={handleSendMessage} />
+
+      {/* 底部输入 */}
+      <div className="px-6 pb-6 pt-2 shrink-0">
+        <div className="max-w-3xl mx-auto">
+          <div className="surface-card border border-app rounded-2xl shadow-soft p-2">
+            <AgentChatInput onSend={handleSendMessage} />
+          </div>
+        </div>
       </div>
     </div>
   );

@@ -20,6 +20,7 @@ import org.springframework.ai.chat.memory.ChatMemory;
 import org.springframework.ai.chat.memory.MessageWindowChatMemory;
 import org.springframework.ai.chat.messages.*;
 import org.springframework.ai.chat.model.ChatResponse;
+import org.springframework.ai.chat.model.Generation;
 import org.springframework.ai.chat.prompt.ChatOptions;
 import org.springframework.ai.chat.prompt.Prompt;
 import org.springframework.ai.model.tool.DefaultToolCallingChatOptions;
@@ -33,6 +34,7 @@ import org.springframework.util.Assert;
 import org.springframework.util.StringUtils;
 
 import java.util.*;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.function.Function;
 import java.util.stream.Collectors;
 
@@ -111,24 +113,70 @@ public class SpecialistRunner {
 
         for (int step = 0; step < MAX_STEPS; step++) {
             // Think 阶段
+            List<Message> currentMessages = chatMemory.get(sessionId);
+            // 过滤孤立 ToolResponseMessage，避免 DeepSeek HTTP 400
+            currentMessages = stripOrphanToolResponses(currentMessages);
             Prompt prompt = Prompt.builder()
                     .chatOptions(chatOptions)
-                    .messages(chatMemory.get(sessionId))
+                    .messages(currentMessages)
                     .build();
 
-            ChatResponse response = chatClient.prompt(prompt)
+            // —— 流式调用:边收 chunk 边推 SSE(与 ShopAi.think() 同构)
+            final String streamId = UUID.randomUUID().toString();
+            final StringBuilder accumulated = new StringBuilder();
+            final AtomicBoolean didStream = new AtomicBoolean(false);
+
+            List<ChatResponse> chunks = chatClient.prompt(prompt)
                     .toolCallbacks(toolCallbacks.toArray(new ToolCallback[0]))
-                    .call()
-                    .chatClientResponse()
-                    .chatResponse();
+                    .stream()
+                    .chatResponse()
+                    .doOnNext(resp -> {
+                        if (resp == null || resp.getResult() == null) return;
+                        AssistantMessage out = resp.getResult().getOutput();
+                        if (out == null) return;
+                        String delta = out.getText();
+                        if (delta != null && !delta.isEmpty()) {
+                            accumulated.append(delta);
+                            didStream.set(true);
+                            emitStreamChunk(sessionId, agentRole, streamId,
+                                    accumulated.toString(), false, null, null, null, sseService);
+                        }
+                    })
+                    .collectList()
+                    .block();
 
-            Assert.notNull(response, "Specialist ChatResponse cannot be null");
+            Assert.notNull(chunks, "Specialist streaming chunks cannot be null");
+            if (chunks.isEmpty()) {
+                throw new IllegalStateException("Specialist LLM 流式响应为空");
+            }
 
-            AssistantMessage output = response.getResult().getOutput();
+            ChatResponse last = chunks.get(chunks.size() - 1);
+            List<AssistantMessage.ToolCall> mergedToolCalls = mergeToolCalls(chunks);
+            AssistantMessage output = AssistantMessage.builder()
+                    .content(accumulated.toString())
+                    .toolCalls(mergedToolCalls)
+                    .build();
+            ChatResponse response = new ChatResponse(
+                    List.of(new Generation(output, last.getResult().getMetadata())),
+                    last.getMetadata()
+            );
+
             List<AssistantMessage.ToolCall> toolCalls = output.getToolCalls();
 
-            // 保存 AssistantMessage（含 agentRole）
-            saveAndPushMessage(sessionId, output, agentRole, chatMessageFacadeService, chatMessageConverter, sseService);
+            // 抽 token 用量(usage 通常只在最后一帧带回)
+            ChatMessageDTO.Usage usage = extractUsage(last);
+
+            // 持久化 + 前端同步
+            if (didStream.get()) {
+                String persistedId = persistStreamedAssistant(sessionId, agentRole,
+                        accumulated.toString(), mergedToolCalls, usage,
+                        chatMessageFacadeService);
+                emitStreamChunk(sessionId, agentRole, streamId,
+                        accumulated.toString(), true, persistedId, mergedToolCalls, usage, sseService);
+            } else {
+                // 只有 tool_calls、无文本:走原来的 AI_GENERATED_CONTENT 路径
+                saveAndPushMessage(sessionId, output, agentRole, usage, chatMessageFacadeService, chatMessageConverter, sseService);
+            }
 
             if (!hasToolCalls(toolCalls)) {
                 // 无工具调用，返回最终回答
@@ -176,12 +224,14 @@ public class SpecialistRunner {
     // ========== 静态工具方法 ==========
 
     public static void saveAndPushMessage(String sessionId, AssistantMessage message, String agentRole,
+                                          ChatMessageDTO.Usage usage,
                                           ChatMessageFacadeService chatMessageFacadeService,
                                           ChatMessageConverter chatMessageConverter,
                                           SseService sseService) {
         ChatMessageDTO.MetaData metadata = ChatMessageDTO.MetaData.builder()
                 .toolCalls(message.getToolCalls())
                 .agentRole(agentRole)
+                .usage(usage)
                 .build();
 
         ChatMessageDTO dto = ChatMessageDTO.builder()
@@ -229,6 +279,97 @@ public class SpecialistRunner {
                     .metadata(SseMessage.Metadata.builder().chatMessageId(dto.getId()).build())
                     .build());
         }
+    }
+
+    // ========== 流式辅助(与 ShopAi.think 同构) ==========
+
+    /** 从 ChatResponse.getMetadata().getUsage() 抽 token 用量。usage 缺失时返回 null。 */
+    private static ChatMessageDTO.Usage extractUsage(ChatResponse response) {
+        if (response == null || response.getMetadata() == null) return null;
+        org.springframework.ai.chat.metadata.Usage u = response.getMetadata().getUsage();
+        if (u == null) return null;
+        Integer prompt = u.getPromptTokens();
+        Integer completion = u.getCompletionTokens();
+        Integer total = u.getTotalTokens();
+        String model = response.getMetadata().getModel();
+        String finishReason = response.getResult() != null && response.getResult().getMetadata() != null
+                ? response.getResult().getMetadata().getFinishReason()
+                : null;
+        return ChatMessageDTO.Usage.builder()
+                .promptTokens(prompt == null ? null : prompt.longValue())
+                .completionTokens(completion == null ? null : completion.longValue())
+                .totalTokens(total == null ? null : total.longValue())
+                .model(model)
+                .finishReason(finishReason)
+                .build();
+    }
+
+    /** 合并所有 chunk 的 tool_calls,按 id 去重。 */
+    private static List<AssistantMessage.ToolCall> mergeToolCalls(List<ChatResponse> chunks) {
+        List<AssistantMessage.ToolCall> merged = new ArrayList<>();
+        Set<String> seen = new HashSet<>();
+        for (ChatResponse r : chunks) {
+            if (r == null || r.getResult() == null || r.getResult().getOutput() == null) continue;
+            List<AssistantMessage.ToolCall> tc = r.getResult().getOutput().getToolCalls();
+            if (tc == null) continue;
+            for (AssistantMessage.ToolCall c : tc) {
+                String id = c.id();
+                if (id != null && !seen.add(id)) continue;
+                merged.add(c);
+            }
+        }
+        return merged;
+    }
+
+    /** 仅持久化流式 assistant(不再推 AI_GENERATED_CONTENT),返回 DB id。 */
+    private static String persistStreamedAssistant(String sessionId, String agentRole,
+                                                   String finalContent,
+                                                   List<AssistantMessage.ToolCall> toolCalls,
+                                                   ChatMessageDTO.Usage usage,
+                                                   ChatMessageFacadeService chatMessageFacadeService) {
+        ChatMessageDTO.MetaData metadata = ChatMessageDTO.MetaData.builder()
+                .toolCalls(toolCalls)
+                .agentRole(agentRole)
+                .usage(usage)
+                .build();
+        ChatMessageDTO dto = ChatMessageDTO.builder()
+                .role(ChatMessageDTO.RoleType.ASSISTANT)
+                .content(finalContent)
+                .sessionId(sessionId)
+                .metadata(metadata)
+                .build();
+        CreateChatMessageResponse resp = chatMessageFacadeService.createChatMessage(dto);
+        return resp.getChatMessageId();
+    }
+
+    /** 推送一帧 AI_STREAM_CHUNK。 */
+    private static void emitStreamChunk(String sessionId, String agentRole, String streamId,
+                                        String content, boolean done, String persistedId,
+                                        List<AssistantMessage.ToolCall> toolCalls,
+                                        ChatMessageDTO.Usage usage,
+                                        SseService sseService) {
+        ChatMessageDTO.MetaData metadata = ChatMessageDTO.MetaData.builder()
+                .toolCalls(toolCalls)
+                .agentRole(agentRole)
+                .usage(usage)
+                .build();
+        ChatMessageVO vo = ChatMessageVO.builder()
+                .id(streamId)
+                .sessionId(sessionId)
+                .role(ChatMessageDTO.RoleType.ASSISTANT)
+                .content(content)
+                .metadata(metadata)
+                .build();
+        sseService.send(sessionId, SseMessage.builder()
+                .type(SseMessage.Type.AI_STREAM_CHUNK)
+                .payload(SseMessage.Payload.builder()
+                        .message(vo)
+                        .done(done)
+                        .build())
+                .metadata(SseMessage.Metadata.builder()
+                        .chatMessageId(persistedId)
+                        .build())
+                .build());
     }
 
     // ========== 私有方法 ==========
@@ -292,5 +433,29 @@ public class SpecialistRunner {
 
     private boolean hasToolCalls(List<AssistantMessage.ToolCall> toolCalls) {
         return toolCalls != null && !toolCalls.isEmpty();
+    }
+
+    /**
+     * 过滤孤立 ToolResponseMessage，确保每个 tool 消息前面都有带 tool_calls 的 assistant 消息。
+     * DeepSeek API 严格要求此协议，否则返回 HTTP 400。
+     */
+    private static List<Message> stripOrphanToolResponses(List<Message> messages) {
+        List<Message> result = new ArrayList<>();
+        boolean lastWasAssistantWithToolCalls = false;
+        for (Message msg : messages) {
+            if (msg instanceof ToolResponseMessage) {
+                if (!lastWasAssistantWithToolCalls) {
+                    log.warn("SpecialistRunner 过滤孤立 ToolResponseMessage");
+                    continue;
+                }
+                result.add(msg);
+                lastWasAssistantWithToolCalls = false;
+            } else {
+                result.add(msg);
+                lastWasAssistantWithToolCalls = (msg instanceof AssistantMessage am)
+                        && am.getToolCalls() != null && !am.getToolCalls().isEmpty();
+            }
+        }
+        return result;
     }
 }

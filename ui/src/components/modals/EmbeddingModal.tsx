@@ -9,7 +9,6 @@ import {
   Typography,
   Spin,
   Tabs,
-  Divider,
 } from "antd";
 import {
   BarcodeOutlined,

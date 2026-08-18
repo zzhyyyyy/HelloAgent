@@ -53,6 +53,8 @@ export function ChatSessionsProvider({ children }: { children: React.ReactNode }
   );
 }
 
+// Hook 与 Provider 同文件便于保持上下文定义内聚；此导出不影响运行时热更新。
+// eslint-disable-next-line react-refresh/only-export-components
 export function useChatSessionsContext() {
   const context = useContext(ChatSessionsContext);
   if (context === undefined) {

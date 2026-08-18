@@ -1,31 +1,54 @@
 import React, { useState, useMemo } from "react";
-import { Card, Space, Typography, Select, Switch, Button, message as antdMessage } from "antd";
+import { Select, Switch, message as antdMessage, Tooltip } from "antd";
 import {
-  BulbOutlined,
-  MessageOutlined,
-  RobotOutlined,
   DownOutlined,
   TeamOutlined,
   UserOutlined,
-  MoonOutlined,
-  SunOutlined,
+  ThunderboltOutlined,
+  ReadOutlined,
+  ShoppingOutlined,
+  BulbOutlined,
 } from "@ant-design/icons";
 import { Sender } from "@ant-design/x";
 import { type AgentVO } from "../../../api/api.ts";
 import { getAgentEmoji } from "../../../utils";
-import { useTheme } from "../../../contexts/ThemeContext.tsx";
 import EmbeddingModal from "../../modals/EmbeddingModal.tsx";
 import RagEvaluationModal from "../../modals/RagEvaluationModal.tsx";
 
-const { Title, Text } = Typography;
-
 interface DefaultAgentChatViewProps {
-  handleSendMessage: (message: string, agentId?: string, mode?: string) => Promise<void>;
+  handleSendMessage: (
+    message: string,
+    agentId?: string,
+    mode?: string,
+  ) => Promise<void>;
   loading: boolean;
   agents: AgentVO[];
   multiAgentMode: boolean;
   onModeChange: (mode: boolean) => void;
 }
+
+const SUGGESTIONS = [
+  {
+    icon: <ShoppingOutlined />,
+    title: "帮我推荐一款主力机",
+    desc: "预算 4000 以内,日常拍照轻度游戏",
+  },
+  {
+    icon: <ReadOutlined />,
+    title: "检索知识库",
+    desc: "在所有知识库中找一下「退款流程」",
+  },
+  {
+    icon: <ThunderboltOutlined />,
+    title: "比较两款产品",
+    desc: "对比 iPhone 16 和 小米 15,从续航和拍照角度",
+  },
+  {
+    icon: <BulbOutlined />,
+    title: "联网搜索",
+    desc: "今天新发布的科技新闻有哪些?",
+  },
+];
 
 const EmptyAgentChatView: React.FC<DefaultAgentChatViewProps> = ({
   handleSendMessage,
@@ -34,178 +57,157 @@ const EmptyAgentChatView: React.FC<DefaultAgentChatViewProps> = ({
   multiAgentMode,
   onModeChange,
 }) => {
-  const { theme, toggleTheme } = useTheme();
   const [message, setMessage] = useState("");
   const [selectedAgentId, setSelectedAgentId] = useState<string | null>(null);
 
-  // 为每个 agent 生成 emoji
-  const agentsWithEmoji = useMemo(() => {
-    return agents.map((agent) => ({
-      ...agent,
-      emoji: getAgentEmoji(agent.id),
-    }));
-  }, [agents]);
+  const agentsWithEmoji = useMemo(
+    () =>
+      agents.map((agent) => ({
+        ...agent,
+        emoji: getAgentEmoji(agent.id),
+      })),
+    [agents],
+  );
 
-  // 计算实际选中的 agent ID（如果用户没有选择，则使用默认的第一个）
   const effectiveAgentId = useMemo(() => {
-    if (selectedAgentId) {
-      return selectedAgentId;
-    }
+    if (selectedAgentId) return selectedAgentId;
     return agents.length > 0 ? agents[0].id : null;
   }, [selectedAgentId, agents]);
 
+  const activeAgent = useMemo(
+    () => agentsWithEmoji.find((a) => a.id === effectiveAgentId),
+    [agentsWithEmoji, effectiveAgentId],
+  );
+
+  const submit = async (text: string) => {
+    const trimmed = text.trim();
+    if (!trimmed) {
+      antdMessage.warning("请输入消息");
+      return;
+    }
+    if (!effectiveAgentId) {
+      antdMessage.warning("请先创建一个智能体助手");
+      return;
+    }
+    try {
+      await handleSendMessage(
+        trimmed,
+        effectiveAgentId,
+        multiAgentMode ? "MULTI" : "SINGLE",
+      );
+      setMessage("");
+    } catch (error) {
+      antdMessage.error(error instanceof Error ? error.message : "发送消息失败");
+    }
+  };
+
   return (
     <div className="flex flex-col h-full">
-      {/* Agent 选择器 + 模式切换 - 顶部 */}
+      {/* 顶部:Agent 选择 + 模式开关 */}
       {agents.length > 0 && (
-        <div className="border-b border-gray-200 bg-white px-4 py-3">
-          <div className="flex items-center justify-between">
-            <Select
-              value={effectiveAgentId}
-              onChange={(value) => setSelectedAgentId(value)}
-              style={{ width: 200 }}
-              className="agent-selector"
-              suffixIcon={<DownOutlined className="text-gray-400" />}
-              placeholder="选择智能体助手"
-              optionRender={(option) => (
-                <div className="flex items-center gap-2">
-                  <span className="text-lg">
-                    {agentsWithEmoji.find((a) => a.id === option.value)?.emoji}
-                  </span>
-                  <span className="text-sm">{option.label}</span>
-                </div>
-              )}
-              options={agentsWithEmoji.map((agent) => ({
-                value: agent.id,
-                label: agent.name,
-              }))}
-            />
-            <div className="flex items-center gap-2">
-              <EmbeddingModal />
-              <RagEvaluationModal />
-              <div className="border-r border-gray-200 h-4 mx-1" />
-              <UserOutlined className={`text-sm ${!multiAgentMode ? 'text-blue-500' : 'text-gray-400'}`} />
-              <Switch
-                checked={multiAgentMode}
-                onChange={onModeChange}
-                size="small"
-                checkedChildren={<TeamOutlined />}
-                unCheckedChildren={<UserOutlined />}
-              />
-              <TeamOutlined className={`text-sm ${multiAgentMode ? 'text-blue-500' : 'text-gray-400'}`} />
-              <div className="border-r border-gray-200 h-4 mx-1" />
-              <Button
-                type="text"
-                size="small"
-                icon={theme === "dark" ? <SunOutlined /> : <MoonOutlined />}
-                onClick={toggleTheme}
-                className="text-gray-500 hover:text-blue-500"
-              />
-            </div>
+        <div className="h-14 flex items-center justify-between px-6 glass border-b border-hairline shrink-0">
+          <Select
+            value={effectiveAgentId}
+            onChange={setSelectedAgentId}
+            style={{ width: 220 }}
+            variant="borderless"
+            suffixIcon={<DownOutlined className="text-subtle" />}
+            placeholder="选择智能体助手"
+            optionRender={(option) => (
+              <div className="flex items-center gap-2">
+                <span className="text-lg">
+                  {agentsWithEmoji.find((a) => a.id === option.value)?.emoji}
+                </span>
+                <span className="text-sm">{option.label}</span>
+              </div>
+            )}
+            options={agentsWithEmoji.map((agent) => ({
+              value: agent.id,
+              label: agent.name,
+            }))}
+          />
+          <div className="flex items-center gap-3">
+            <EmbeddingModal />
+            <RagEvaluationModal />
+            <div className="h-4 w-px bg-app" />
+            <Tooltip
+              title={multiAgentMode ? "多 Agent 协作模式" : "单 Agent 模式"}
+            >
+              <div className="flex items-center gap-2 px-2 py-1 rounded-lg surface-muted">
+                <UserOutlined
+                  className={
+                    !multiAgentMode ? "brand-text text-xs" : "text-subtle text-xs"
+                  }
+                />
+                <Switch
+                  checked={multiAgentMode}
+                  onChange={onModeChange}
+                  size="small"
+                />
+                <TeamOutlined
+                  className={
+                    multiAgentMode ? "brand-text text-xs" : "text-subtle text-xs"
+                  }
+                />
+              </div>
+            </Tooltip>
           </div>
         </div>
       )}
-      <div className="flex-1 flex items-center justify-center p-6">
-        <div className="max-w-2xl w-full space-y-6">
-          <div className="text-center mb-8">
-            <Title level={2} className="mb-2">
-              开始新的对话
-            </Title>
-            <Text type="secondary" className="text-base">
-              选择一个智能体助手开始聊天，或直接发送消息创建新会话
-            </Text>
+
+      {/* 中心 Hero */}
+      <div className="flex-1 overflow-y-auto">
+        <div className="max-w-3xl mx-auto px-6 py-16 flex flex-col items-center animate-app-fade-in">
+          <div className="brand-gradient w-16 h-16 rounded-2xl flex items-center justify-center shadow-glow mb-6">
+            <span className="text-white font-bold text-2xl select-none">H</span>
           </div>
-          <Space orientation="vertical" size="large" className="w-full">
-            <Card
-              hoverable
-              className="cursor-pointer transition-all hover:shadow-lg"
-            >
-              <Space size="middle">
-                <div className="w-12 h-12 rounded-full bg-gradient-to-br from-blue-400 to-purple-400 flex items-center justify-center">
-                  <RobotOutlined className="text-white text-xl" />
-                </div>
-                <div>
-                  <Title level={5} className="mb-1">
-                    智能对话
-                  </Title>
-                  <Text type="secondary">
-                    与 AI 助手进行智能对话，获取帮助和建议
-                  </Text>
-                </div>
-              </Space>
-            </Card>
+          <h1 className="text-3xl font-semibold text-strong tracking-tight mb-2">
+            你好,我是 {activeAgent?.name ?? "HelloAgent"}
+          </h1>
+          <p className="text-muted text-base text-center max-w-xl mb-10">
+            {activeAgent?.description?.trim() ||
+              "支持工具调用、知识库检索、多 Agent 协作。试试在下方输入,或者从下面挑一个示例开始。"}
+          </p>
 
-            <Card
-              hoverable
-              className="cursor-pointer transition-all hover:shadow-lg"
-            >
-              <Space size="middle">
-                <div className="w-12 h-12 rounded-full bg-gradient-to-br from-green-400 to-teal-400 flex items-center justify-center">
-                  <BulbOutlined className="text-white text-xl" />
+          {/* 快捷提问 */}
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 w-full">
+            {SUGGESTIONS.map((s) => (
+              <button
+                key={s.title}
+                onClick={() => submit(`${s.title}。${s.desc}`)}
+                className="group text-left surface-card border border-hairline rounded-xl p-4 hover:shadow-elevated hover:border-app transition-all duration-200"
+              >
+                <div className="flex items-start gap-3">
+                  <div className="w-9 h-9 rounded-lg surface-muted flex items-center justify-center brand-text text-base shrink-0 group-hover:scale-105 transition-transform">
+                    {s.icon}
+                  </div>
+                  <div className="flex-1 min-w-0">
+                    <div className="text-[13px] font-medium text-strong leading-snug truncate">
+                      {s.title}
+                    </div>
+                    <div className="text-xs text-muted mt-1 line-clamp-2 leading-relaxed">
+                      {s.desc}
+                    </div>
+                  </div>
                 </div>
-                <div>
-                  <Title level={5} className="mb-1">
-                    知识问答
-                  </Title>
-                  <Text type="secondary">
-                    基于知识库进行问答，获取准确的信息
-                  </Text>
-                </div>
-              </Space>
-            </Card>
-
-            <Card
-              hoverable
-              className="cursor-pointer transition-all hover:shadow-lg"
-            >
-              <Space size="middle">
-                <div className="w-12 h-12 rounded-full bg-gradient-to-br from-orange-400 to-red-400 flex items-center justify-center">
-                  <MessageOutlined className="text-white text-xl" />
-                </div>
-                <div>
-                  <Title level={5} className="mb-1">
-                    快速开始
-                  </Title>
-                  <Text type="secondary">
-                    在下方输入框输入消息，立即开始对话
-                  </Text>
-                </div>
-              </Space>
-            </Card>
-          </Space>
+              </button>
+            ))}
+          </div>
         </div>
       </div>
-      <div className="border-t border-gray-200 bg-white">
-        {/* 输入框 */}
-        <div className="px-4 pb-4 pt-4">
-          <Sender
-            onSubmit={async () => {
-              const trimmedMessage = message.trim();
-              if (!trimmedMessage) {
-                antdMessage.warning("请输入消息");
-                return;
-              }
-              if (!effectiveAgentId) {
-                antdMessage.warning("请先创建一个智能体助手");
-                return;
-              }
 
-              try {
-                await handleSendMessage(trimmedMessage, effectiveAgentId, multiAgentMode ? "MULTI" : "SINGLE");
-                setMessage("");
-              } catch (error) {
-                const errorMessage =
-                  error instanceof Error ? error.message : "发送消息失败";
-                antdMessage.error(errorMessage);
-              }
-            }}
-            value={message}
-            loading={loading}
-            placeholder="输入消息开始对话..."
-            onChange={(value) => {
-              setMessage(value);
-            }}
-          />
+      {/* Sender */}
+      <div className="px-6 pb-6 pt-2">
+        <div className="max-w-3xl mx-auto">
+          <div className="surface-card border border-app rounded-2xl shadow-soft p-2">
+            <Sender
+              onSubmit={() => submit(message)}
+              value={message}
+              loading={loading}
+              placeholder="输入消息开始对话…"
+              onChange={setMessage}
+            />
+          </div>
         </div>
       </div>
     </div>

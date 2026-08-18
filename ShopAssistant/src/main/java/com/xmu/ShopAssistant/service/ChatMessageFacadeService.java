@@ -26,4 +26,7 @@ public interface ChatMessageFacadeService {
     void deleteChatMessage(String chatMessageId);
 
     void updateChatMessage(String chatMessageId, UpdateChatMessageRequest request);
+
+    /** 把 LLM-as-Judge 评分写入指定消息的 metadata.evalScore(原有 metadata 其它字段保留)。 */
+    void updateMessageEvalScore(String chatMessageId, ChatMessageDTO.EvalScore evalScore);
 }

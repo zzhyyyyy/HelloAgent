@@ -250,5 +250,33 @@ public class ChatMessageFacadeServiceImpl implements ChatMessageFacadeService {
             throw new BizException("更新聊天消息时发生序列化错误: " + e.getMessage());
         }
     }
+
+    @Override
+    public void updateMessageEvalScore(String chatMessageId, ChatMessageDTO.EvalScore evalScore) {
+        try {
+            ChatMessage existing = chatMessageMapper.selectById(chatMessageId);
+            if (existing == null) {
+                throw new BizException("聊天消息不存在: " + chatMessageId);
+            }
+            ChatMessageDTO dto = chatMessageConverter.toDTO(existing);
+            ChatMessageDTO.MetaData md = dto.getMetadata() != null
+                    ? dto.getMetadata()
+                    : ChatMessageDTO.MetaData.builder().build();
+            md.setEvalScore(evalScore);
+            dto.setMetadata(md);
+            ChatMessage updated = chatMessageConverter.toEntity(dto);
+            updated.setId(existing.getId());
+            updated.setSessionId(existing.getSessionId());
+            updated.setRole(existing.getRole());
+            updated.setCreatedAt(existing.getCreatedAt());
+            updated.setUpdatedAt(LocalDateTime.now());
+            int rows = chatMessageMapper.updateById(updated);
+            if (rows <= 0) {
+                throw new BizException("更新评分失败");
+            }
+        } catch (JsonProcessingException e) {
+            throw new BizException("更新评分序列化失败: " + e.getMessage());
+        }
+    }
 }
 

@@ -1,22 +1,63 @@
 package com.xmu.ShopAssistant.agent.tools;
 
+import com.xmu.ShopAssistant.agent.tools.security.GuardOutcome;
+import com.xmu.ShopAssistant.agent.tools.security.SensitivityLevel;
+import com.xmu.ShopAssistant.agent.tools.security.ToolGuard;
+import com.xmu.ShopAssistant.agent.tools.security.ToolSecurityProperties;
+import jakarta.annotation.PostConstruct;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Component;
+
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
 import java.nio.file.StandardOpenOption;
+import java.util.ArrayList;
 import java.util.List;
+import java.util.Map;
+import java.util.regex.Pattern;
 import java.util.stream.Collectors;
 import java.util.stream.Stream;
 
-@Component //禁用文件系统相关工具
+@Component
 @Slf4j
 public class FileSystemTools implements Tool {
 
-    // 允许访问的基础目录，防止路径遍历攻击
-    private static final String BASE_DIRECTORY = System.getProperty("user.dir");
+    private final ToolGuard guard;
+    private final ToolSecurityProperties props;
+
+    private Path sandboxRoot;
+    private List<Pattern> denyPatterns;
+
+    public FileSystemTools(ToolGuard guard, ToolSecurityProperties props) {
+        this.guard = guard;
+        this.props = props;
+    }
+
+    @PostConstruct
+    void init() {
+        this.sandboxRoot = Paths.get(props.getFilesystem().getSandboxDir())
+                .toAbsolutePath()
+                .normalize();
+        try {
+            Files.createDirectories(sandboxRoot);
+        } catch (IOException e) {
+            log.warn("无法创建沙箱目录 {}: {}", sandboxRoot, e.getMessage());
+        }
+        this.denyPatterns = new ArrayList<>();
+        for (String p : props.getFilesystem().getFilenameDenylist()) {
+            try {
+                denyPatterns.add(Pattern.compile(p));
+            } catch (Exception e) {
+                log.warn("denylist 正则编译失败 pattern={} err={}", p, e.getMessage());
+            }
+        }
+        log.info("FileSystemTools 沙箱已就绪 root={} writeEnabled={} deleteEnabled={}",
+                sandboxRoot,
+                props.getFilesystem().isWriteEnabled(),
+                props.getFilesystem().isDeleteEnabled());
+    }
 
     @Override
     public String getName() {
@@ -25,7 +66,7 @@ public class FileSystemTools implements Tool {
 
     @Override
     public String getDescription() {
-        return "提供文件系统操作的工具，包括读取文件、写入文件、列出目录等功能";
+        return "受沙箱保护的文件系统访问。默认只读,所有路径限制在沙箱根目录内,文件名黑名单与大小上限受配置约束。";
     }
 
     @Override
@@ -33,309 +74,256 @@ public class FileSystemTools implements Tool {
         return ToolType.OPTIONAL;
     }
 
-    /**
-     * 读取文件内容
-     *
-     * @param filePath 文件路径（相对于工作目录）
-     * @return 文件内容
-     */
+    @Override
+    public SensitivityLevel getSensitivity() {
+        return SensitivityLevel.DANGEROUS;
+    }
+
     @org.springframework.ai.tool.annotation.Tool(
             name = "readFile",
-            description = "读取指定文件的内容。参数：filePath - 文件路径（相对于工作目录）"
+            description = "读取沙箱目录内文件的内容。参数:filePath(相对沙箱根)。" +
+                    "受文件大小上限约束,且命中文件名黑名单(.env/.key/.pem 等)会被拒绝。"
     )
     public String readFile(String filePath) {
+        GuardOutcome g = guard.check(getName(), "readFile");
+        if (!g.allowed()) return g.message();
         try {
-            Path path = validateAndResolvePath(filePath);
-
-            if (!Files.exists(path)) {
-                return "错误：文件不存在 - " + filePath;
+            Path path = resolve(filePath);
+            if (!Files.exists(path)) return "错误:文件不存在 - " + filePath;
+            if (!Files.isRegularFile(path)) return "错误:路径不是文件 - " + filePath;
+            long size = Files.size(path);
+            int maxBytes = props.getFilesystem().getMaxReadBytes();
+            if (size > maxBytes) {
+                return "错误:文件大小 " + size + " 字节,超过单次读取上限 " + maxBytes + " 字节。";
             }
-
-            if (!Files.isRegularFile(path)) {
-                return "错误：路径不是文件 - " + filePath;
-            }
-
             String content = Files.readString(path);
-            log.info("成功读取文件: {}", filePath);
+            guard.audit(getName(), "readFile",
+                    Map.of("path", filePath, "size", size), "OK", "");
             return "文件内容:\n" + content;
-
         } catch (SecurityException e) {
-            log.error("安全错误：{}", e.getMessage());
-            return "错误：访问被拒绝 - " + e.getMessage();
-        } catch (IOException e) {
-            log.error("读取文件失败: {}", filePath, e);
-            return "错误：读取文件失败 - " + e.getMessage();
+            guard.audit(getName(), "readFile",
+                    Map.of("path", filePath, "reason", "security"),
+                    "DENIED", e.getMessage());
+            return "错误:访问被拒绝。";
         } catch (Exception e) {
-            log.error("未知错误: {}", e.getMessage(), e);
-            return "错误：操作失败 - " + e.getMessage();
+            log.warn("readFile failed path={} err={}", filePath, e.getMessage());
+            guard.audit(getName(), "readFile",
+                    Map.of("path", filePath, "err", e.getClass().getSimpleName()),
+                    "ERROR", e.getMessage());
+            return "错误:读取失败。";
         }
     }
 
-    /**
-     * 写入文件内容
-     *
-     * @param filePath 文件路径（相对于工作目录）
-     * @param content  要写入的内容
-     * @return 操作结果
-     */
     @org.springframework.ai.tool.annotation.Tool(
             name = "writeFile",
-            description = "将内容写入指定文件。如果文件不存在则创建，如果文件存在则覆盖。参数：filePath - 文件路径（相对于工作目录），content - 要写入的内容"
+            description = "向沙箱目录写入文件(默认禁用,需在 agent.tools.security.filesystem.write-enabled=true 开启)。"
     )
     public String writeFile(String filePath, String content) {
+        if (!props.getFilesystem().isWriteEnabled()) {
+            guard.audit(getName(), "writeFile",
+                    Map.of("path", filePath, "reason", "write_disabled"),
+                    "DENIED", "");
+            return "错误:写入功能已禁用。请管理员在配置中开启 write-enabled。";
+        }
+        GuardOutcome g = guard.check(getName(), "writeFile");
+        if (!g.allowed()) return g.message();
         try {
-            Path path = validateAndResolvePath(filePath);
-
-            // 确保父目录存在
+            Path path = resolve(filePath);
             Path parent = path.getParent();
             if (parent != null && !Files.exists(parent)) {
                 Files.createDirectories(parent);
-                log.info("创建目录: {}", parent);
             }
-
-            Files.writeString(path, content, StandardOpenOption.CREATE, StandardOpenOption.TRUNCATE_EXISTING, StandardOpenOption.WRITE);
-            log.info("成功写入文件: {}", filePath);
+            Files.writeString(path, content,
+                    StandardOpenOption.CREATE,
+                    StandardOpenOption.TRUNCATE_EXISTING,
+                    StandardOpenOption.WRITE);
+            guard.audit(getName(), "writeFile",
+                    Map.of("path", filePath, "size", content.length()),
+                    "OK", "");
             return "成功写入文件: " + filePath;
-
         } catch (SecurityException e) {
-            log.error("安全错误：{}", e.getMessage());
-            return "错误：访问被拒绝 - " + e.getMessage();
-        } catch (IOException e) {
-            log.error("写入文件失败: {}", filePath, e);
-            return "错误：写入文件失败 - " + e.getMessage();
+            return "错误:访问被拒绝。";
         } catch (Exception e) {
-            log.error("未知错误: {}", e.getMessage(), e);
-            return "错误：操作失败 - " + e.getMessage();
+            log.warn("writeFile failed path={} err={}", filePath, e.getMessage());
+            return "错误:写入失败。";
         }
     }
 
-    /**
-     * 追加内容到文件
-     *
-     * @param filePath 文件路径（相对于工作目录）
-     * @param content  要追加的内容
-     * @return 操作结果
-     */
     @org.springframework.ai.tool.annotation.Tool(
             name = "appendToFile",
-            description = "将内容追加到指定文件的末尾。如果文件不存在则创建。参数：filePath - 文件路径（相对于工作目录），content - 要追加的内容"
+            description = "向沙箱目录文件追加内容(默认禁用,需 write-enabled=true 开启)。"
     )
     public String appendToFile(String filePath, String content) {
+        if (!props.getFilesystem().isWriteEnabled()) {
+            return "错误:追加(写入)功能已禁用。";
+        }
+        GuardOutcome g = guard.check(getName(), "appendToFile");
+        if (!g.allowed()) return g.message();
         try {
-            Path path = validateAndResolvePath(filePath);
-
-            // 确保父目录存在
+            Path path = resolve(filePath);
             Path parent = path.getParent();
             if (parent != null && !Files.exists(parent)) {
                 Files.createDirectories(parent);
-                log.info("创建目录: {}", parent);
             }
-
-            Files.writeString(path, content, StandardOpenOption.CREATE, StandardOpenOption.APPEND);
-            log.info("成功追加内容到文件: {}", filePath);
-            return "成功追加内容到文件: " + filePath;
-
+            Files.writeString(path, content,
+                    StandardOpenOption.CREATE,
+                    StandardOpenOption.APPEND);
+            guard.audit(getName(), "appendToFile",
+                    Map.of("path", filePath, "size", content.length()),
+                    "OK", "");
+            return "成功追加到文件: " + filePath;
         } catch (SecurityException e) {
-            log.error("安全错误：{}", e.getMessage());
-            return "错误：访问被拒绝 - " + e.getMessage();
-        } catch (IOException e) {
-            log.error("追加内容到文件失败: {}", filePath, e);
-            return "错误：追加内容失败 - " + e.getMessage();
+            return "错误:访问被拒绝。";
         } catch (Exception e) {
-            log.error("未知错误: {}", e.getMessage(), e);
-            return "错误：操作失败 - " + e.getMessage();
+            log.warn("appendToFile failed path={} err={}", filePath, e.getMessage());
+            return "错误:追加失败。";
         }
     }
 
-    /**
-     * 列出目录中的文件和子目录
-     *
-     * @param directoryPath 目录路径（相对于工作目录），如果为空则列出当前目录
-     * @return 目录内容列表
-     */
     @org.springframework.ai.tool.annotation.Tool(
             name = "listFiles",
-            description = "列出指定目录中的文件和子目录。参数：directoryPath - 目录路径（相对于工作目录），如果为空则列出当前目录"
+            description = "列出沙箱目录下的文件与子目录。参数:directoryPath(相对沙箱根;空字符串则列出根)。" +
+                    "黑名单文件被自动过滤。"
     )
     public String listFiles(String directoryPath) {
+        GuardOutcome g = guard.check(getName(), "listFiles");
+        if (!g.allowed()) return g.message();
         try {
-            Path path;
-            if (directoryPath == null || directoryPath.trim().isEmpty()) {
-                path = Paths.get(BASE_DIRECTORY);
-            } else {
-                path = validateAndResolvePath(directoryPath);
+            Path path = (directoryPath == null || directoryPath.isBlank())
+                    ? sandboxRoot
+                    : resolve(directoryPath);
+            if (!Files.exists(path)) return "错误:目录不存在。";
+            if (!Files.isDirectory(path)) return "错误:路径不是目录。";
+
+            try (Stream<Path> stream = Files.list(path)) {
+                List<String> items = stream
+                        .filter(p -> !isDenied(p.getFileName().toString()))
+                        .map(this::formatEntry)
+                        .sorted()
+                        .collect(Collectors.toList());
+                if (items.isEmpty()) return "目录为空。";
+                String shown = directoryPath == null || directoryPath.isBlank() ? "/" : directoryPath;
+                return "目录内容 (" + shown + "):\n" + String.join("\n", items);
             }
-
-            if (!Files.exists(path)) {
-                return "错误：目录不存在 - " + directoryPath;
-            }
-
-            if (!Files.isDirectory(path)) {
-                return "错误：路径不是目录 - " + directoryPath;
-            }
-
-            List<String> items = Files.list(path)
-                    .map(p -> {
-                        String name = p.getFileName().toString();
-                        if (Files.isDirectory(p)) {
-                            return "[DIR] " + name;
-                        } else {
-                            try {
-                                long size = Files.size(p);
-                                return "[FILE] " + name + " (" + formatFileSize(size) + ")";
-                            } catch (IOException e) {
-                                return "[FILE] " + name;
-                            }
-                        }
-                    })
-                    .sorted()
-                    .collect(Collectors.toList());
-
-            if (items.isEmpty()) {
-                return "目录为空: " + directoryPath;
-            }
-
-            log.info("成功列出目录内容: {}", directoryPath);
-            return "目录内容 (" + directoryPath + "):\n" + String.join("\n", items);
-
         } catch (SecurityException e) {
-            log.error("安全错误：{}", e.getMessage());
-            return "错误：访问被拒绝 - " + e.getMessage();
-        } catch (IOException e) {
-            log.error("列出目录失败: {}", directoryPath, e);
-            return "错误：列出目录失败 - " + e.getMessage();
+            return "错误:访问被拒绝。";
         } catch (Exception e) {
-            log.error("未知错误: {}", e.getMessage(), e);
-            return "错误：操作失败 - " + e.getMessage();
+            log.warn("listFiles failed dir={} err={}", directoryPath, e.getMessage());
+            return "错误:列目录失败。";
         }
     }
 
-    /**
-     * 删除文件或目录
-     *
-     * @param path 文件或目录路径（相对于工作目录）
-     * @return 操作结果
-     */
     @org.springframework.ai.tool.annotation.Tool(
             name = "deleteFile",
-            description = "删除指定的文件或目录。参数：path - 文件或目录路径（相对于工作目录）"
+            description = "删除沙箱目录下的文件或目录(默认禁用,需 delete-enabled=true 开启)。"
     )
-    public String deleteFile(String path) {
+    public String deleteFile(String filePath) {
+        if (!props.getFilesystem().isDeleteEnabled()) {
+            guard.audit(getName(), "deleteFile",
+                    Map.of("path", filePath, "reason", "delete_disabled"),
+                    "DENIED", "");
+            return "错误:删除功能已禁用。";
+        }
+        GuardOutcome g = guard.check(getName(), "deleteFile");
+        if (!g.allowed()) return g.message();
         try {
-            Path filePath = validateAndResolvePath(path);
-
-            if (!Files.exists(filePath)) {
-                return "错误：文件或目录不存在 - " + path;
-            }
-
-            if (Files.isDirectory(filePath)) {
-                // 递归删除目录
-                try (Stream<Path> paths = Files.walk(filePath)) {
-                    paths.sorted((a, b) -> b.compareTo(a)) // 先删除文件，再删除目录
-                            .forEach(p -> {
-                                try {
-                                    Files.delete(p);
-                                } catch (IOException e) {
-                                    log.warn("删除失败: {}", p, e);
-                                }
-                            });
+            Path target = resolve(filePath);
+            if (!Files.exists(target)) return "错误:目标不存在。";
+            if (Files.isDirectory(target)) {
+                try (Stream<Path> walk = Files.walk(target)) {
+                    walk.sorted((a, b) -> b.compareTo(a)).forEach(p -> {
+                        try {
+                            Files.delete(p);
+                        } catch (IOException e) {
+                            log.warn("删除失败 path={} err={}", p, e.getMessage());
+                        }
+                    });
                 }
-                log.info("成功删除目录: {}", path);
-                return "成功删除目录: " + path;
             } else {
-                Files.delete(filePath);
-                log.info("成功删除文件: {}", path);
-                return "成功删除文件: " + path;
+                Files.delete(target);
             }
-
+            guard.audit(getName(), "deleteFile",
+                    Map.of("path", filePath), "OK", "");
+            return "成功删除: " + filePath;
         } catch (SecurityException e) {
-            log.error("安全错误：{}", e.getMessage());
-            return "错误：访问被拒绝 - " + e.getMessage();
-        } catch (IOException e) {
-            log.error("删除文件失败: {}", path, e);
-            return "错误：删除失败 - " + e.getMessage();
+            return "错误:访问被拒绝。";
         } catch (Exception e) {
-            log.error("未知错误: {}", e.getMessage(), e);
-            return "错误：操作失败 - " + e.getMessage();
+            log.warn("deleteFile failed path={} err={}", filePath, e.getMessage());
+            return "错误:删除失败。";
         }
     }
 
-    /**
-     * 创建目录
-     *
-     * @param directoryPath 目录路径（相对于工作目录）
-     * @return 操作结果
-     */
     @org.springframework.ai.tool.annotation.Tool(
             name = "createDirectory",
-            description = "创建指定目录，如果父目录不存在则一并创建。参数：directoryPath - 目录路径（相对于工作目录）"
+            description = "在沙箱目录内创建目录(默认禁用,需 write-enabled=true 开启)。"
     )
     public String createDirectory(String directoryPath) {
+        if (!props.getFilesystem().isWriteEnabled()) {
+            return "错误:创建目录(写入)功能已禁用。";
+        }
+        GuardOutcome g = guard.check(getName(), "createDirectory");
+        if (!g.allowed()) return g.message();
         try {
-            Path path = validateAndResolvePath(directoryPath);
-
+            Path path = resolve(directoryPath);
             if (Files.exists(path)) {
-                if (Files.isDirectory(path)) {
-                    return "目录已存在: " + directoryPath;
-                } else {
-                    return "错误：路径已存在但不是目录 - " + directoryPath;
-                }
+                return Files.isDirectory(path) ? "目录已存在: " + directoryPath
+                        : "错误:路径已存在但不是目录。";
             }
-
             Files.createDirectories(path);
-            log.info("成功创建目录: {}", directoryPath);
+            guard.audit(getName(), "createDirectory",
+                    Map.of("path", directoryPath), "OK", "");
             return "成功创建目录: " + directoryPath;
-
         } catch (SecurityException e) {
-            log.error("安全错误：{}", e.getMessage());
-            return "错误：访问被拒绝 - " + e.getMessage();
-        } catch (IOException e) {
-            log.error("创建目录失败: {}", directoryPath, e);
-            return "错误：创建目录失败 - " + e.getMessage();
+            return "错误:访问被拒绝。";
         } catch (Exception e) {
-            log.error("未知错误: {}", e.getMessage(), e);
-            return "错误：操作失败 - " + e.getMessage();
+            log.warn("createDirectory failed path={} err={}", directoryPath, e.getMessage());
+            return "错误:创建目录失败。";
         }
     }
 
-    /**
-     * 验证路径并解析为绝对路径，防止路径遍历攻击
-     *
-     * @param filePath 文件路径
-     * @return 解析后的绝对路径
-     * @throws SecurityException 如果路径不安全
-     */
-    private Path validateAndResolvePath(String filePath) throws SecurityException {
-        if (filePath == null || filePath.trim().isEmpty()) {
-            throw new IllegalArgumentException("文件路径不能为空");
+    // ---------- 内部 ----------
+
+    private Path resolve(String rel) {
+        if (rel == null || rel.isBlank()) {
+            throw new IllegalArgumentException("路径不能为空");
         }
-
-        Path basePath = Paths.get(BASE_DIRECTORY).toAbsolutePath().normalize();
-        Path resolvedPath = basePath.resolve(filePath).toAbsolutePath().normalize();
-
-        // 检查解析后的路径是否在基础目录内
-        if (!resolvedPath.startsWith(basePath)) {
-            throw new SecurityException("路径遍历攻击被阻止: " + filePath);
+        // 拒绝绝对路径(Unix / 与 Windows 盘符)
+        if (rel.startsWith("/") || rel.startsWith("\\") || rel.matches("^[a-zA-Z]:.*")) {
+            throw new SecurityException("不允许绝对路径");
         }
-
-        return resolvedPath;
+        Path resolved = sandboxRoot.resolve(rel).toAbsolutePath().normalize();
+        if (!resolved.startsWith(sandboxRoot)) {
+            throw new SecurityException("路径越界,已阻止");
+        }
+        String name = resolved.getFileName() == null ? "" : resolved.getFileName().toString();
+        if (isDenied(name)) {
+            throw new SecurityException("文件名命中黑名单");
+        }
+        return resolved;
     }
 
-    /**
-     * 格式化文件大小
-     *
-     * @param size 文件大小（字节）
-     * @return 格式化后的文件大小字符串
-     */
-    private String formatFileSize(long size) {
-        if (size < 1024) {
-            return size + " B";
-        } else if (size < 1024 * 1024) {
-            return String.format("%.2f KB", size / 1024.0);
-        } else if (size < 1024 * 1024 * 1024) {
-            return String.format("%.2f MB", size / (1024.0 * 1024.0));
-        } else {
-            return String.format("%.2f GB", size / (1024.0 * 1024.0 * 1024.0));
+    private boolean isDenied(String name) {
+        if (name == null || name.isEmpty()) return false;
+        for (Pattern p : denyPatterns) {
+            if (p.matcher(name).matches()) return true;
         }
+        return false;
+    }
+
+    private String formatEntry(Path p) {
+        String name = p.getFileName().toString();
+        if (Files.isDirectory(p)) return "[DIR] " + name;
+        try {
+            return "[FILE] " + name + " (" + formatSize(Files.size(p)) + ")";
+        } catch (IOException e) {
+            return "[FILE] " + name;
+        }
+    }
+
+    private String formatSize(long size) {
+        if (size < 1024) return size + " B";
+        if (size < 1024 * 1024) return String.format("%.2f KB", size / 1024.0);
+        if (size < 1024L * 1024 * 1024) return String.format("%.2f MB", size / 1048576.0);
+        return String.format("%.2f GB", size / 1073741824.0);
     }
 }

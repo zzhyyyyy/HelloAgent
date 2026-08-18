@@ -108,6 +108,12 @@
             <artifactId>spring-ai-starter-model-zhipuai</artifactId>
         </dependency>
 
+        <!-- MCP (Model Context Protocol) 客户端 - 自动暴露 MCP server 的工具为 ToolCallbackProvider -->
+        <dependency>
+            <groupId>org.springframework.ai</groupId>
+            <artifactId>spring-ai-starter-mcp-client</artifactId>
+        </dependency>
+
         <!-- 邮件发送 -->
         <dependency>
             <groupId>org.springframework.boot</groupId>

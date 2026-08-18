@@ -19,10 +19,28 @@ export interface ToolResponse {
   responseData: string;
 }
 
+export interface ChatMessageUsage {
+  promptTokens?: number;
+  completionTokens?: number;
+  totalTokens?: number;
+  model?: string;
+  finishReason?: string;
+}
+
+export interface ChatMessageEvalScore {
+  correctness?: number;
+  completeness?: number;
+  relevance?: number;
+  reasoning?: string;
+  judgeModel?: string;
+}
+
 export interface ChatMessageVOMetadata {
   toolCalls?: ToolCall[];
   toolResponse?: ToolResponse;
   agentRole?: string;
+  usage?: ChatMessageUsage;
+  evalScore?: ChatMessageEvalScore;
 }
 
 export interface ChatMessageVO {
@@ -35,6 +53,8 @@ export interface ChatMessageVO {
 
 export type SseMessageType =
   | "AI_GENERATED_CONTENT"
+  | "AI_STREAM_CHUNK"
+  | "AI_EVAL_SCORE"
   | "AI_PLANNING"
   | "AI_THINKING"
   | "AI_EXECUTING"

@@ -1,120 +1,245 @@
 @import "tailwindcss";
 
-/* 修复 Ant Design Tabs 在 flex 布局中的滚动问题 */
+/* ============================================================
+   设计 Token —— 单一光源,亮/暗双套
+   层级：surface-app < surface-sidebar < surface-card < surface-raised
+   ============================================================ */
+:root {
+  /* Brand */
+  --brand-50:  #eef2ff;
+  --brand-100: #e0e7ff;
+  --brand-300: #a5b4fc;
+  --brand-500: #6366f1;
+  --brand-600: #4f46e5;
+  --brand-700: #4338ca;
+
+  /* Surfaces */
+  --surface-app:     #f7f7f9;
+  --surface-sidebar: #ffffff;
+  --surface-card:    #ffffff;
+  --surface-raised:  #ffffff;
+  --surface-muted:   #f3f4f6;
+
+  /* Text */
+  --text-strong:   #0f172a;
+  --text-default:  #1f2937;
+  --text-muted:    #64748b;
+  --text-subtle:   #94a3b8;
+
+  /* Borders */
+  --border-hairline: #ececef;
+  --border-default:  #e4e4e7;
+  --border-strong:   #d4d4d8;
+
+  /* Shadows */
+  --shadow-soft:     0 1px 2px rgba(15, 23, 42, 0.04), 0 1px 1px rgba(15, 23, 42, 0.02);
+  --shadow-elevated: 0 6px 24px -8px rgba(15, 23, 42, 0.12), 0 2px 6px -2px rgba(15, 23, 42, 0.06);
+  --shadow-glow:     0 0 0 1px rgba(99, 102, 241, 0.18), 0 8px 24px -10px rgba(99, 102, 241, 0.4);
+
+  /* Misc */
+  --radius-sm: 8px;
+  --radius-md: 12px;
+  --radius-lg: 16px;
+  --radius-xl: 20px;
+
+  color-scheme: light;
+}
+
+html.dark {
+  --brand-50:  #1e1b4b;
+  --brand-100: #312e81;
+  --brand-300: #818cf8;
+  --brand-500: #818cf8;
+  --brand-600: #a5b4fc;
+  --brand-700: #c7d2fe;
+
+  --surface-app:     #0b0b0f;
+  --surface-sidebar: #111114;
+  --surface-card:    #16161b;
+  --surface-raised:  #1c1c22;
+  --surface-muted:   #1a1a20;
+
+  --text-strong:   #f8fafc;
+  --text-default:  #e5e7eb;
+  --text-muted:    #9aa3b2;
+  --text-subtle:   #6b7280;
+
+  --border-hairline: #1f1f25;
+  --border-default:  #26262d;
+  --border-strong:   #36363f;
+
+  --shadow-soft:     0 1px 2px rgba(0, 0, 0, 0.4);
+  --shadow-elevated: 0 8px 28px -10px rgba(0, 0, 0, 0.6), 0 2px 6px -2px rgba(0, 0, 0, 0.3);
+  --shadow-glow:     0 0 0 1px rgba(129, 140, 248, 0.25), 0 8px 24px -10px rgba(99, 102, 241, 0.5);
+
+  color-scheme: dark;
+}
+
+/* 字体 & 基础 */
+html, body, #root {
+  height: 100%;
+}
+
+body {
+  margin: 0;
+  font-family:
+    "Inter", -apple-system, BlinkMacSystemFont, "Segoe UI",
+    "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", "Source Han Sans SC",
+    "Helvetica Neue", Arial, sans-serif;
+  font-feature-settings: "cv11", "ss01";
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  background-color: var(--surface-app);
+  color: var(--text-default);
+  transition: background-color 0.2s ease, color 0.2s ease;
+}
+
+code, pre, .font-mono {
+  font-family: "JetBrains Mono", "SF Mono", "Menlo", "Consolas", monospace;
+}
+
+/* 滚动条 —— 细、低调、暗色友好 */
+* {
+  scrollbar-width: thin;
+  scrollbar-color: var(--border-strong) transparent;
+}
+*::-webkit-scrollbar { width: 8px; height: 8px; }
+*::-webkit-scrollbar-track { background: transparent; }
+*::-webkit-scrollbar-thumb {
+  background: var(--border-default);
+  border-radius: 8px;
+  border: 2px solid transparent;
+  background-clip: padding-box;
+}
+*::-webkit-scrollbar-thumb:hover { background: var(--border-strong); background-clip: padding-box; }
+
+.scrollbar-hide { -ms-overflow-style: none; scrollbar-width: none; }
+.scrollbar-hide::-webkit-scrollbar { display: none; }
+
+/* ============================================================
+   通用 surface 工具类
+   ============================================================ */
+.surface-app     { background-color: var(--surface-app); }
+.surface-sidebar { background-color: var(--surface-sidebar); }
+.surface-card    { background-color: var(--surface-card); }
+.surface-raised  { background-color: var(--surface-raised); }
+.surface-muted   { background-color: var(--surface-muted); }
+
+.text-strong  { color: var(--text-strong); }
+.text-default { color: var(--text-default); }
+.text-muted   { color: var(--text-muted); }
+.text-subtle  { color: var(--text-subtle); }
+
+.border-hairline { border-color: var(--border-hairline); }
+.border-app      { border-color: var(--border-default); }
+
+.shadow-soft     { box-shadow: var(--shadow-soft); }
+.shadow-elevated { box-shadow: var(--shadow-elevated); }
+.shadow-glow     { box-shadow: var(--shadow-glow); }
+
+.brand-text { color: var(--brand-500); }
+.brand-bg   { background-color: var(--brand-500); }
+
+/* 玻璃态(用于 sticky bar) */
+.glass {
+  background-color: color-mix(in srgb, var(--surface-sidebar) 80%, transparent);
+  backdrop-filter: saturate(180%) blur(12px);
+  -webkit-backdrop-filter: saturate(180%) blur(12px);
+}
+
+/* 品牌渐变(用于 logo) */
+.brand-gradient {
+  background-image: linear-gradient(135deg, #6366f1 0%, #a855f7 50%, #ec4899 100%);
+}
+
+/* ============================================================
+   AntD 5/6 暗色覆盖 —— 用 token 而不是写死颜色
+   ============================================================ */
+html.dark .ant-tabs-tab { color: var(--text-muted) !important; }
+html.dark .ant-tabs-tab-active .ant-tabs-tab-btn { color: var(--brand-500) !important; }
+html.dark .ant-tabs-ink-bar { background: var(--brand-500) !important; }
+
+html.dark .ant-card {
+  background-color: var(--surface-card) !important;
+  border-color: var(--border-default) !important;
+}
+
+html.dark .ant-table {
+  background-color: var(--surface-card) !important;
+  color: var(--text-default) !important;
+}
+html.dark .ant-table-thead > tr > th {
+  background-color: var(--surface-app) !important;
+  color: var(--text-default) !important;
+  border-bottom-color: var(--border-default) !important;
+}
+html.dark .ant-table-tbody > tr > td { border-bottom-color: var(--border-default) !important; }
+html.dark .ant-table-tbody > tr:hover > td { background-color: var(--surface-raised) !important; }
+
+html.dark .ant-tag { background-color: var(--surface-raised) !important; }
+html.dark .ant-select-dropdown { background-color: var(--surface-card) !important; }
+html.dark .ant-empty-description { color: var(--text-muted) !important; }
+html.dark .ant-divider { border-color: var(--border-default) !important; }
+html.dark .ant-modal-content,
+html.dark .ant-modal-header { background-color: var(--surface-card) !important; }
+html.dark .ant-modal-title  { color: var(--text-strong) !important; }
+html.dark .ant-input,
+html.dark .ant-input-affix-wrapper,
+html.dark .ant-select-selector {
+  background-color: var(--surface-raised) !important;
+  border-color: var(--border-default) !important;
+  color: var(--text-default) !important;
+}
+html.dark .ant-btn-text { color: var(--text-muted) !important; }
+html.dark .ant-btn-text:hover { color: var(--brand-500) !important; background-color: var(--surface-raised) !important; }
+
+/* Bubble (AntD X) */
+html.dark .ant-bubble-content {
+  background-color: var(--surface-raised) !important;
+  color: var(--text-default) !important;
+}
+
+/* Sender (AntD X) */
+html.dark .ant-sender {
+  background-color: var(--surface-card) !important;
+  border-color: var(--border-default) !important;
+}
+
+/* ============================================================
+   AntD Tabs 在 flex 布局中正确填充
+   ============================================================ */
 .ant-tabs {
   display: flex;
   flex-direction: column;
   height: 100%;
 }
+.ant-tabs-content-holder { flex: 1; min-height: 0; overflow: hidden; }
+.ant-tabs-content { height: 100%; }
+.ant-tabs-tabpane { height: 100%; overflow: hidden; }
 
-.ant-tabs-content-holder {
-  flex: 1;
-  min-height: 0;
-  overflow: hidden;
-}
-
-.ant-tabs-content {
-  height: 100%;
-}
-
-.ant-tabs-tabpane {
-  height: 100%;
-  overflow: hidden;
-}
-
-/* 隐藏滚动条但保持滚动功能 */
-.scrollbar-hide {
-  -ms-overflow-style: none; /* IE and Edge */
-  scrollbar-width: none; /* Firefox */
-}
-
-.scrollbar-hide::-webkit-scrollbar {
-  display: none; /* Chrome, Safari and Opera */
-}
-
-/* ============ 白天/黑夜模式 ============ */
-:root {
-  --bg-primary: #ffffff;
-  --bg-secondary: #f5f5f5;
-  --bg-card: #ffffff;
-  --text-primary: #1f1f1f;
-  --text-secondary: #8c8c8c;
-  --border-color: #e8e8e8;
-}
-
-html.dark {
-  --bg-primary: #141414;
-  --bg-secondary: #1f1f1f;
-  --bg-card: #1f1f1f;
-  --text-primary: #e8e8e8;
-  --text-secondary: #8c8c8c;
-  --border-color: #303030;
-}
-
-html.dark body {
-  background-color: #141414;
-  color: #e8e8e8;
-}
-
-/* Ant Design 暗色覆盖 */
-html.dark .ant-card {
-  background-color: #1f1f1f !important;
-  border-color: #303030 !important;
-}
-
-html.dark .ant-table {
-  background-color: #1f1f1f !important;
-  color: #e8e8e8 !important;
-}
-
-html.dark .ant-table-thead > tr > th {
-  background-color: #141414 !important;
-  color: #e8e8e8 !important;
-  border-bottom-color: #303030 !important;
-}
-
-html.dark .ant-table-tbody > tr > td {
-  border-bottom-color: #303030 !important;
-}
-
-html.dark .ant-table-tbody > tr:hover > td {
-  background-color: #262626 !important;
-}
-
-html.dark .ant-tag {
-  background-color: #262626 !important;
-}
-
-html.dark .ant-select-dropdown {
-  background-color: #1f1f1f !important;
-}
-
-html.dark .ant-empty-description {
-  color: #8c8c8c !important;
-}
-
-/* 自定义 dark 工具类 */
-html.dark .bg-white {
-  background-color: var(--bg-card) !important;
-}
-
+/* ============================================================
+   Tailwind 兼容覆盖(老代码里大量 bg-white/text-gray-X/border-gray-X)
+   ============================================================ */
+html.dark .bg-white     { background-color: var(--surface-card) !important; }
 html.dark .bg-gray-50,
-html.dark .bg-slate-50 {
-  background-color: var(--bg-secondary) !important;
-}
+html.dark .bg-slate-50  { background-color: var(--surface-app) !important; }
+html.dark .bg-gray-100  { background-color: var(--surface-muted) !important; }
 
-html.dark .border-gray-200 {
-  border-color: var(--border-color) !important;
-}
+html.dark .border-gray-200 { border-color: var(--border-default) !important; }
+html.dark .border-gray-100 { border-color: var(--border-hairline) !important; }
 
 html.dark .text-gray-400,
-html.dark .text-gray-500,
-html.dark .text-gray-600 {
-  color: var(--text-secondary) !important;
-}
-
+html.dark .text-gray-500 { color: var(--text-muted) !important; }
+html.dark .text-gray-600 { color: var(--text-default) !important; }
 html.dark .text-gray-700,
 html.dark .text-gray-800,
-html.dark .text-gray-900 {
-  color: var(--text-primary) !important;
+html.dark .text-gray-900 { color: var(--text-strong) !important; }
+
+/* ============================================================
+   动画
+   ============================================================ */
+@keyframes app-fade-in {
+  from { opacity: 0; transform: translateY(4px); }
+  to   { opacity: 1; transform: translateY(0); }
 }
+.animate-app-fade-in { animation: app-fade-in 0.35s cubic-bezier(0.16, 1, 0.3, 1) both; }

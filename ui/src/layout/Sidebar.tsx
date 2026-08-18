@@ -6,14 +6,12 @@ interface SidebarProps {
 
 const Sidebar: React.FC<SidebarProps> = ({ children }) => {
   return (
-    <div
-      className="h-full bg-slate-50"
-      style={{
-        width: "320px",
-      }}
+    <aside
+      className="h-full surface-sidebar border-r border-app shadow-soft shrink-0"
+      style={{ width: 280 }}
     >
       {children}
-    </div>
+    </aside>
   );
 };
 

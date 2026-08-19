@@ -73,8 +73,6 @@ DRAFT → EVALUATING → EVALUATED → APPROVED → ACTIVE → ROLLED_BACK
 | 演化闭环 API | [`EvolutionController`](ShopAssistant/src/main/java/com/xmu/ShopAssistant/controller/EvolutionController.java) |
 | 候选工作流与回滚 | [`EvolutionWorkflowService`](ShopAssistant/src/main/java/com/xmu/ShopAssistant/evolution/EvolutionWorkflowService.java) |
 
-更细的“问题 → 类 → 方法 → 实现职责”映射见 [HelloAgent 面试 Q&A](HELLOAGENT-INTERVIEW-QA.md)。
-
 ## 技术栈
 
 - 后端：Java 17、Spring Boot、Spring AI、MyBatis、PostgreSQL
@@ -101,8 +99,7 @@ HelloAgent/
 │   └── src/test/                    # 单元测试与集成测试
 ├── ui/                              # React 19 前端
 ├── data/skills/                     # SKILL.md 运行目录
-├── CHANGELOG-2026-08.md             # 最新功能变更记录
-└── HELLOAGENT-INTERVIEW-QA.md        # 面试问答与源码溯源
+└── CHANGELOG-2026-08.md             # 最新功能变更记录
 ```
 
 ## 本地启动
@@ -176,7 +173,6 @@ npm run build
 ## 文档
 
 - [2026-08 功能变更记录](CHANGELOG-2026-08.md)
-- [HelloAgent 面试 Q&A（含源码溯源）](HELLOAGENT-INTERVIEW-QA.md)
 - [早期版本变更记录](CHANGELOG-2026-06.md)
 
 ## License

@@ -57,27 +57,105 @@ public class EvolutionWorkflowService {
     public synchronized EvolutionCandidate activate(String id) {
         EvolutionCandidate candidate = require(id);
         requireStatus(candidate, EvolutionCandidateStatus.APPROVED);
-        boolean hasActiveVersion = candidateStore.list(Integer.MAX_VALUE).stream()
-                .anyMatch(other -> !other.getId().equals(candidate.getId())
-                        && other.getStatus() == EvolutionCandidateStatus.ACTIVE
-                        && other.getType() == candidate.getType()
-                        && other.getTargetName().equals(candidate.getTargetName()));
-        if (hasActiveVersion) {
-            throw new IllegalStateException("同一目标已有活动候选，请先回滚后再发布新版本");
-        }
         safetyValidator.validate(candidate);
+
+        EvolutionCandidate previousActive = findActiveCandidate(candidate);
         candidate.setPreviousContent(artifactManager.currentContent(candidate.getType(), candidate.getTargetName()));
-        artifactManager.activate(candidate);
-        candidate.setStatus(EvolutionCandidateStatus.ACTIVE);
-        return candidateStore.save(candidate);
+        candidate.setPreviousCandidateId(previousActive == null ? null : previousActive.getId());
+        // 先保存版本链元数据；若制品切换失败，候选仍保持 APPROVED，可安全重试。
+        candidateStore.save(candidate);
+
+        try {
+            artifactManager.activate(candidate);
+            if (previousActive != null) {
+                previousActive.setStatus(EvolutionCandidateStatus.SUPERSEDED);
+                candidateStore.save(previousActive);
+            }
+            candidate.setStatus(EvolutionCandidateStatus.ACTIVE);
+            return candidateStore.save(candidate);
+        } catch (RuntimeException activationError) {
+            compensateFailedActivation(candidate, previousActive, activationError);
+            throw activationError;
+        }
     }
 
     public synchronized EvolutionCandidate rollback(String id) {
         EvolutionCandidate candidate = require(id);
         requireStatus(candidate, EvolutionCandidateStatus.ACTIVE);
-        artifactManager.restore(candidate);
-        candidate.setStatus(EvolutionCandidateStatus.ROLLED_BACK);
-        return candidateStore.save(candidate);
+        EvolutionCandidate previous = requirePreviousCandidate(candidate);
+
+        try {
+            artifactManager.restore(candidate);
+            candidate.setStatus(EvolutionCandidateStatus.ROLLED_BACK);
+            EvolutionCandidate saved = candidateStore.save(candidate);
+            if (previous != null) {
+                previous.setStatus(EvolutionCandidateStatus.ACTIVE);
+                candidateStore.save(previous);
+            }
+            return saved;
+        } catch (RuntimeException rollbackError) {
+            compensateFailedRollback(candidate, previous, rollbackError);
+            throw rollbackError;
+        }
+    }
+
+    private EvolutionCandidate findActiveCandidate(EvolutionCandidate candidate) {
+        List<EvolutionCandidate> active = candidateStore.list(Integer.MAX_VALUE).stream()
+                .filter(other -> !other.getId().equals(candidate.getId()))
+                .filter(other -> other.getStatus() == EvolutionCandidateStatus.ACTIVE)
+                .filter(other -> other.getType() == candidate.getType())
+                .filter(other -> other.getTargetName().equals(candidate.getTargetName()))
+                .toList();
+        if (active.size() > 1) {
+            throw new IllegalStateException("同一目标存在多个活动候选，拒绝继续发布");
+        }
+        return active.isEmpty() ? null : active.get(0);
+    }
+
+    /** 兼容旧候选：previousCandidateId 为空时，previousContent 仍可回滚到基线内容。 */
+    private EvolutionCandidate requirePreviousCandidate(EvolutionCandidate candidate) {
+        String previousId = candidate.getPreviousCandidateId();
+        if (previousId == null || previousId.isBlank()) return null;
+        EvolutionCandidate previous = candidateStore.find(previousId);
+        if (previous == null) {
+            throw new IllegalStateException("上一候选版本不存在，拒绝破坏当前活动版本: " + previousId);
+        }
+        if (previous.getStatus() != EvolutionCandidateStatus.SUPERSEDED) {
+            throw new IllegalStateException("上一候选版本状态异常: " + previous.getStatus());
+        }
+        return previous;
+    }
+
+    private void compensateFailedActivation(EvolutionCandidate candidate,
+                                            EvolutionCandidate previous,
+                                            RuntimeException original) {
+        try {
+            artifactManager.restore(candidate);
+            candidate.setStatus(EvolutionCandidateStatus.APPROVED);
+            candidateStore.save(candidate);
+            if (previous != null) {
+                previous.setStatus(EvolutionCandidateStatus.ACTIVE);
+                candidateStore.save(previous);
+            }
+        } catch (RuntimeException compensationError) {
+            original.addSuppressed(compensationError);
+        }
+    }
+
+    private void compensateFailedRollback(EvolutionCandidate candidate,
+                                          EvolutionCandidate previous,
+                                          RuntimeException original) {
+        try {
+            artifactManager.activate(candidate);
+            candidate.setStatus(EvolutionCandidateStatus.ACTIVE);
+            candidateStore.save(candidate);
+            if (previous != null) {
+                previous.setStatus(EvolutionCandidateStatus.SUPERSEDED);
+                candidateStore.save(previous);
+            }
+        } catch (RuntimeException compensationError) {
+            original.addSuppressed(compensationError);
+        }
     }
 
     private EvolutionCandidate require(String id) {

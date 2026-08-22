@@ -6,6 +6,7 @@ public enum EvolutionCandidateStatus {
     EVALUATED,
     APPROVED,
     ACTIVE,
+    SUPERSEDED,
     REJECTED,
     ROLLED_BACK
 }

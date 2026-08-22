@@ -44,7 +44,8 @@ flowchart LR
 演化流程不是让模型直接修改线上配置，而是 Human-in-the-loop 的受控状态机：
 
 ```text
-DRAFT → EVALUATING → EVALUATED → APPROVED → ACTIVE → ROLLED_BACK
+DRAFT → EVALUATING → EVALUATED → APPROVED → ACTIVE
+旧 ACTIVE → SUPERSEDED；当前 ACTIVE 回滚后 → ROLLED_BACK，并恢复上一候选为 ACTIVE
 ```
 
 1. Assistant 消息完成后，`AgentEvalService` 异步执行 correctness、completeness、relevance 三维评分。
@@ -52,7 +53,7 @@ DRAFT → EVALUATING → EVALUATED → APPROVED → ACTIVE → ROLLED_BACK
 3. `EvolutionCandidateService` 从低分样本生成版本化 Prompt/Skill 候选，但不直接生效。
 4. `LlmEvolutionReplayEvaluator` 在不挂载真实工具的条件下回放历史问题，避免数据库、邮件和文件副作用。
 5. `EvolutionWorkflowService` 执行安全校验与质量门槛校验；默认候选均分至少 3.2，且相对基线提升至少 0.2。
-6. 通过人工审批后，`EvolutionArtifactManager` 热加载活动版本并原子持久化，应用重启可恢复，也可回滚 previousContent。
+6. 通过人工审批后，`EvolutionArtifactManager` 热加载活动版本并原子持久化；连续发布会保存 `previousCandidateId + previousContent`，旧活动版本转为 `SUPERSEDED`，回滚时逐级恢复。
 
 > 当前回放主要验证回答质量，不代表已完整覆盖工具选择质量；生产环境可进一步接入 Mock Tool、录制回放、灰度流量和线上自动回滚。
 

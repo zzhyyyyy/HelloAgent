@@ -70,6 +70,7 @@ public class EvolutionArtifactManager {
         persist(EvolutionActiveArtifact.builder()
                 .type(candidate.getType())
                 .targetName(candidate.getTargetName())
+                .candidateId(candidate.getPreviousCandidateId())
                 .content(candidate.getPreviousContent())
                 .activatedAt(Instant.now())
                 .build());

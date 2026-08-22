@@ -33,6 +33,7 @@ class EvolutionWorkflowServiceTest {
 
         EvolutionCandidate active = fixture.service().activate(candidate.getId());
         assertThat(active.getStatus()).isEqualTo(EvolutionCandidateStatus.ACTIVE);
+        assertThat(active.getPreviousCandidateId()).isNull();
         assertThat(active.getPreviousContent()).isEqualTo("基线 Prompt");
         verify(fixture.artifactManager()).activate(active);
 
@@ -64,7 +65,101 @@ class EvolutionWorkflowServiceTest {
                 .hasMessageContaining("安全检查");
     }
 
+    @Test
+    void shouldReplaceActivePromptAndRestorePreviousCandidateOnRollback() {
+        Fixture fixture = fixture(true);
+        when(fixture.artifactManager().currentContent(EvolutionArtifactType.PROMPT, "think.system.v1"))
+                .thenReturn("基线 Prompt", "改进后的 Prompt");
+
+        EvolutionCandidate first = evaluateApproveActivate(fixture, fixture.candidate());
+        EvolutionCandidate second = fixture.candidateStore().save(EvolutionCandidate.builder()
+                .type(EvolutionArtifactType.PROMPT)
+                .targetName("think.system.v1")
+                .baseVersion("think.system.v1")
+                .candidateVersion("think.system.v1.candidate.second")
+                .content("第二次改进后的 Prompt")
+                .rationale("继续修复新的低分问题")
+                .sourceTraceIds(first.getSourceTraceIds())
+                .status(EvolutionCandidateStatus.DRAFT)
+                .build());
+
+        EvolutionCandidate secondActive = evaluateApproveActivate(fixture, second);
+        assertThat(secondActive.getPreviousCandidateId()).isEqualTo(first.getId());
+        assertThat(secondActive.getPreviousContent()).isEqualTo("改进后的 Prompt");
+        assertThat(fixture.candidateStore().find(first.getId()).getStatus())
+                .isEqualTo(EvolutionCandidateStatus.SUPERSEDED);
+
+        EvolutionCandidate rolledBack = fixture.service().rollback(secondActive.getId());
+        assertThat(rolledBack.getStatus()).isEqualTo(EvolutionCandidateStatus.ROLLED_BACK);
+        assertThat(fixture.candidateStore().find(first.getId()).getStatus())
+                .isEqualTo(EvolutionCandidateStatus.ACTIVE);
+
+        EvolutionCandidate firstRolledBack = fixture.service().rollback(first.getId());
+        assertThat(firstRolledBack.getStatus()).isEqualTo(EvolutionCandidateStatus.ROLLED_BACK);
+        assertThat(firstRolledBack.getPreviousCandidateId()).isNull();
+        assertThat(firstRolledBack.getPreviousContent()).isEqualTo("基线 Prompt");
+    }
+
+    @Test
+    void shouldBuildSameVersionChainForSkill() {
+        String firstSkill = """
+                ---
+                name: order-refund
+                description: 退款流程
+                allowedTools: [databaseQuery]
+                ---
+
+                先查询订单，再判断退款资格。
+                """;
+        String secondSkill = """
+                ---
+                name: order-refund
+                description: 退款流程
+                allowedTools: [databaseQuery]
+                ---
+
+                先查询订单和支付状态，再说明退款依据与下一步操作。
+                """;
+        Fixture fixture = fixture(true, EvolutionArtifactType.SKILL,
+                "order-refund", "基线 Skill", firstSkill);
+        when(fixture.artifactManager().currentContent(EvolutionArtifactType.SKILL, "order-refund"))
+                .thenReturn("基线 Skill", firstSkill);
+
+        EvolutionCandidate first = evaluateApproveActivate(fixture, fixture.candidate());
+        EvolutionCandidate second = fixture.candidateStore().save(EvolutionCandidate.builder()
+                .type(EvolutionArtifactType.SKILL)
+                .targetName("order-refund")
+                .baseVersion("order-refund")
+                .candidateVersion("order-refund.candidate.second")
+                .content(secondSkill)
+                .rationale("补充支付状态与回答结构")
+                .sourceTraceIds(first.getSourceTraceIds())
+                .status(EvolutionCandidateStatus.DRAFT)
+                .build());
+
+        EvolutionCandidate secondActive = evaluateApproveActivate(fixture, second);
+        assertThat(secondActive.getPreviousCandidateId()).isEqualTo(first.getId());
+        assertThat(secondActive.getPreviousContent()).isEqualTo(firstSkill);
+        assertThat(fixture.candidateStore().find(first.getId()).getStatus())
+                .isEqualTo(EvolutionCandidateStatus.SUPERSEDED);
+    }
+
+    private EvolutionCandidate evaluateApproveActivate(Fixture fixture, EvolutionCandidate candidate) {
+        fixture.service().evaluate(candidate.getId());
+        fixture.service().approve(candidate.getId());
+        return fixture.service().activate(candidate.getId());
+    }
+
     private Fixture fixture(boolean passed) {
+        return fixture(passed, EvolutionArtifactType.PROMPT,
+                "think.system.v1", "基线 Prompt", "改进后的 Prompt");
+    }
+
+    private Fixture fixture(boolean passed,
+                            EvolutionArtifactType type,
+                            String targetName,
+                            String baselineContent,
+                            String candidateContent) {
         EvolutionProperties properties = new EvolutionProperties();
         properties.setStorageDir(tempDir.toString());
         ObjectMapper objectMapper = new ObjectMapper().findAndRegisterModules();
@@ -82,11 +177,11 @@ class EvolutionWorkflowServiceTest {
                 .lowScore(true)
                 .build());
         EvolutionCandidate candidate = candidateStore.save(EvolutionCandidate.builder()
-                .type(EvolutionArtifactType.PROMPT)
-                .targetName("think.system.v1")
-                .baseVersion("think.system.v1")
-                .candidateVersion("think.system.v1.candidate.test")
-                .content("改进后的 Prompt")
+                .type(type)
+                .targetName(targetName)
+                .baseVersion(targetName)
+                .candidateVersion(targetName + ".candidate.test")
+                .content(candidateContent)
                 .rationale("测试")
                 .sourceTraceIds(List.of(trace.getId()))
                 .status(EvolutionCandidateStatus.DRAFT)
@@ -102,8 +197,8 @@ class EvolutionWorkflowServiceTest {
                 .evaluatedAt(Instant.now())
                 .build();
         EvolutionArtifactManager artifactManager = mock(EvolutionArtifactManager.class);
-        when(artifactManager.currentContent(EvolutionArtifactType.PROMPT, "think.system.v1"))
-                .thenReturn("基线 Prompt");
+        when(artifactManager.currentContent(type, targetName))
+                .thenReturn(baselineContent);
         EvolutionWorkflowService service = new EvolutionWorkflowService(
                 candidateStore, traceStore, evaluator,
                 new EvolutionArtifactSafetyValidator(), artifactManager);

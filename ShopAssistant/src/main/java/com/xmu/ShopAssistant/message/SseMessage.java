@@ -1,5 +1,6 @@
 package com.xmu.ShopAssistant.message;
 
+import com.xmu.ShopAssistant.checkpoint.AgentCheckpointView;
 import com.xmu.ShopAssistant.model.vo.ChatMessageVO;
 import lombok.AllArgsConstructor;
 import lombok.Builder;
@@ -21,6 +22,7 @@ public class SseMessage {
         private ChatMessageVO message;
         private String statusText;
         private Boolean done;
+        private AgentCheckpointView checkpoint;
     }
 
     @Data
@@ -28,6 +30,7 @@ public class SseMessage {
     @Builder
     public static class Metadata {
         private String chatMessageId;
+        private String checkpointId;
     }
 
     // 自定义消息类型
@@ -41,6 +44,8 @@ public class SseMessage {
         AI_GENERATED_CONTENT,
         AI_STREAM_CHUNK,
         AI_EVAL_SCORE,       // assistant 消息持久化后异步产生的 LLM-as-Judge 评分
+        AI_APPROVAL_REQUIRED,// 危险工具已暂停，等待用户审批
+        AI_APPROVAL_RESOLVED,// 审批已处理或执行失败，移除前端审批卡片
         AI_PLANNING,
         AI_THINKING,
         AI_EXECUTING,

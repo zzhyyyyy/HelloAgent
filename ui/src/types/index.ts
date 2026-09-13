@@ -51,10 +51,35 @@ export interface ChatMessageVO {
   metadata?: ChatMessageVOMetadata;
 }
 
+export type AgentCheckpointStatus =
+  | "WAITING_APPROVAL"
+  | "APPROVED"
+  | "EXECUTING"
+  | "REJECTED"
+  | "REJECTION_EXECUTING"
+  | "REJECTION_COMPLETED"
+  | "TOOL_COMPLETED"
+  | "RESUMING"
+  | "COMPLETED"
+  | "FAILED"
+  | "UNKNOWN";
+
+export interface AgentCheckpoint {
+  id: string;
+  sessionId: string;
+  status: AgentCheckpointStatus;
+  toolNames: string[];
+  argumentPreview: string;
+  createdAt: string;
+  errorMessage?: string;
+}
+
 export type SseMessageType =
   | "AI_GENERATED_CONTENT"
   | "AI_STREAM_CHUNK"
   | "AI_EVAL_SCORE"
+  | "AI_APPROVAL_REQUIRED"
+  | "AI_APPROVAL_RESOLVED"
   | "AI_PLANNING"
   | "AI_THINKING"
   | "AI_EXECUTING"
@@ -64,10 +89,12 @@ export interface SseMessagePayload {
   message: ChatMessageVO;
   statusText: string;
   done: boolean;
+  checkpoint?: AgentCheckpoint;
 }
 
 export interface SseMessageMetadata {
   chatMessageId: string;
+  checkpointId?: string;
 }
 
 export interface SseMessage {

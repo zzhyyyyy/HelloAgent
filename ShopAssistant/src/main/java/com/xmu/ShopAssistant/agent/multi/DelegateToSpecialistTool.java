@@ -13,6 +13,8 @@ import com.xmu.ShopAssistant.service.SseService;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.util.StringUtils;
 
+import java.util.UUID;
+
 /**
  * Supervisor 用于委派任务给 Specialist Agent 的工具。
  * 非 Spring Bean，由 ShopAiFactory 在创建 Supervisor 时实例化并注入 sessionId。
@@ -65,7 +67,8 @@ public class DelegateToSpecialistTool implements Tool {
             return "错误：task 不能为空";
         }
 
-        String agentRole = "specialist:" + specialistAgentId;
+        // 每次委派使用独立 runId，审批恢复时只加载本次 Specialist 的协议消息。
+        String agentRole = "specialist:" + specialistAgentId + "#" + UUID.randomUUID();
         log.info("Supervisor 委派任务: specialistAgentId={}, task={}", specialistAgentId, task);
 
         // 保存 Supervisor 发出的 tool call 消息（已由 ShopAi.saveMessage 处理）

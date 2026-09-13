@@ -2,7 +2,12 @@ package com.xmu.ShopAssistant.service;
 
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.xmu.ShopAssistant.checkpoint.AgentCheckpointService;
+import com.xmu.ShopAssistant.checkpoint.AgentRuntimeType;
 import com.xmu.ShopAssistant.agent.tools.Tool;
+import com.xmu.ShopAssistant.agent.tools.security.SensitivityLevel;
+import com.xmu.ShopAssistant.agent.loop.ToolLoopGuard;
+import com.xmu.ShopAssistant.agent.loop.ToolLoopGuardFactory;
 import com.xmu.ShopAssistant.config.ChatClientRegistry;
 import com.xmu.ShopAssistant.converter.AgentConverter;
 import com.xmu.ShopAssistant.converter.ChatMessageConverter;
@@ -42,7 +47,7 @@ import java.util.stream.Collectors;
 @Service
 public class SpecialistRunner {
 
-    private static final int MAX_STEPS = 15;
+    private static final int MAX_STEPS = 20;
     private static final int DEFAULT_MAX_MESSAGES = 20;
 
     private final AgentMapper agentMapper;
@@ -53,6 +58,8 @@ public class SpecialistRunner {
     private final ChatMessageConverter chatMessageConverter;
     private final SseService sseService;
     private final ObjectMapper objectMapper;
+    private final AgentCheckpointService checkpointService;
+    private final ToolLoopGuardFactory toolLoopGuardFactory;
 
     public SpecialistRunner(AgentMapper agentMapper,
                             AgentConverter agentConverter,
@@ -61,7 +68,9 @@ public class SpecialistRunner {
                             ChatMessageFacadeService chatMessageFacadeService,
                             ChatMessageConverter chatMessageConverter,
                             SseService sseService,
-                            ObjectMapper objectMapper) {
+                            ObjectMapper objectMapper,
+                            AgentCheckpointService checkpointService,
+                            ToolLoopGuardFactory toolLoopGuardFactory) {
         this.agentMapper = agentMapper;
         this.agentConverter = agentConverter;
         this.chatClientRegistry = chatClientRegistry;
@@ -70,6 +79,8 @@ public class SpecialistRunner {
         this.chatMessageConverter = chatMessageConverter;
         this.sseService = sseService;
         this.objectMapper = objectMapper;
+        this.checkpointService = checkpointService;
+        this.toolLoopGuardFactory = toolLoopGuardFactory;
     }
 
     /**
@@ -82,6 +93,19 @@ public class SpecialistRunner {
      * @return Specialist 的最终回答文本
      */
     public String run(String specialistAgentId, String task, String sessionId, String agentRole) {
+        return runInternal(specialistAgentId, task, sessionId, agentRole, false);
+    }
+
+    /** 审批完成后，从数据库中的 Specialist 协议消息恢复独立 Harness。 */
+    public String resume(String specialistAgentId, String task, String sessionId, String agentRole) {
+        return runInternal(specialistAgentId, task, sessionId, agentRole, true);
+    }
+
+    private String runInternal(String specialistAgentId,
+                               String task,
+                               String sessionId,
+                               String agentRole,
+                               boolean resume) {
         // 1. 加载 Specialist Agent 配置
         Agent agent = loadAgent(specialistAgentId);
         AgentDTO agentConfig = toAgentConfig(agent);
@@ -94,7 +118,12 @@ public class SpecialistRunner {
 
         // 3. 解析工具列表并构建 ToolCallback
         List<Tool> runtimeTools = resolveRuntimeTools(agentConfig);
-        List<ToolCallback> toolCallbacks = buildToolCallbacks(runtimeTools);
+        RuntimeToolCallbacks runtimeToolCallbacks = buildToolCallbacks(runtimeTools);
+        ToolLoopGuard loopGuard = toolLoopGuardFactory.create();
+        List<ToolCallback> toolCallbacks = toolLoopGuardFactory.protect(
+                runtimeToolCallbacks.callbacks(),
+                loopGuard
+        );
 
         // 4. 创建独立的 ChatMemory（不加载历史，只包含 system prompt + 委派任务）
         ChatMemory chatMemory = MessageWindowChatMemory.builder()
@@ -102,6 +131,15 @@ public class SpecialistRunner {
                 .build();
         chatMemory.add(sessionId, new SystemMessage(agent.getSystemPrompt()));
         chatMemory.add(sessionId, new UserMessage(task));
+        if (resume) {
+            chatMemory.add(sessionId, loadSpecialistProtocolMessages(
+                    sessionId,
+                    agentRole,
+                    agentConfig.getChatOptions() == null
+                            ? DEFAULT_MAX_MESSAGES
+                            : agentConfig.getChatOptions().getMessageLength()
+            ));
+        }
 
         // 5. 运行 ReAct 循环
         ChatOptions chatOptions = DefaultToolCallingChatOptions.builder()
@@ -116,6 +154,14 @@ public class SpecialistRunner {
             List<Message> currentMessages = chatMemory.get(sessionId);
             // 过滤孤立 ToolResponseMessage，避免 DeepSeek HTTP 400
             currentMessages = stripOrphanToolResponses(currentMessages);
+            boolean finalAnswerOnly = loopGuard.isFused();
+            if (finalAnswerOnly) {
+                currentMessages = new ArrayList<>(currentMessages);
+                currentMessages.add(new SystemMessage(
+                        "【工具循环保护】" + loopGuard.getFuseReason()
+                                + "。本轮禁止继续调用任何工具，必须基于已有工具结果直接给出最终回答。"
+                ));
+            }
             Prompt prompt = Prompt.builder()
                     .chatOptions(chatOptions)
                     .messages(currentMessages)
@@ -126,8 +172,11 @@ public class SpecialistRunner {
             final StringBuilder accumulated = new StringBuilder();
             final AtomicBoolean didStream = new AtomicBoolean(false);
 
-            List<ChatResponse> chunks = chatClient.prompt(prompt)
-                    .toolCallbacks(toolCallbacks.toArray(new ToolCallback[0]))
+            var requestSpec = chatClient.prompt(prompt);
+            if (!finalAnswerOnly) {
+                requestSpec = requestSpec.toolCallbacks(toolCallbacks.toArray(new ToolCallback[0]));
+            }
+            List<ChatResponse> chunks = requestSpec
                     .stream()
                     .chatResponse()
                     .doOnNext(resp -> {
@@ -152,6 +201,9 @@ public class SpecialistRunner {
 
             ChatResponse last = chunks.get(chunks.size() - 1);
             List<AssistantMessage.ToolCall> mergedToolCalls = mergeToolCalls(chunks);
+            if (finalAnswerOnly) {
+                mergedToolCalls = List.of();
+            }
             AssistantMessage output = AssistantMessage.builder()
                     .content(accumulated.toString())
                     .toolCalls(mergedToolCalls)
@@ -182,6 +234,21 @@ public class SpecialistRunner {
                 // 无工具调用，返回最终回答
                 finalAnswer = output.getText();
                 break;
+            }
+
+            if (checkpointService.pauseIfApprovalRequired(
+                    sessionId,
+                    specialistAgentId,
+                    agentRole,
+                    AgentRuntimeType.SPECIALIST,
+                    toolCalls,
+                    runtimeToolCallbacks.approvalRequiredNames(),
+                    task
+            ).isPresent()) {
+                log.info("Specialist 危险工具调用已暂停: agentId={}, tools={}",
+                        specialistAgentId,
+                        toolCalls.stream().map(AssistantMessage.ToolCall::name).toList());
+                return waitingApprovalResult(specialistAgentId);
             }
 
             // Execute 阶段
@@ -219,6 +286,10 @@ public class SpecialistRunner {
         log.info("Specialist 执行完成: agentId={}, finalAnswerLength={}", specialistAgentId,
                 finalAnswer != null ? finalAnswer.length() : 0);
         return finalAnswer != null ? finalAnswer : "任务执行完成";
+    }
+
+    public static String waitingApprovalResult(String specialistAgentId) {
+        return "Specialist " + specialistAgentId + " 的危险操作正在等待用户审批；当前未执行该工具。";
     }
 
     // ========== 静态工具方法 ==========
@@ -408,8 +479,9 @@ public class SpecialistRunner {
         return runtimeTools;
     }
 
-    private List<ToolCallback> buildToolCallbacks(List<Tool> runtimeTools) {
+    private RuntimeToolCallbacks buildToolCallbacks(List<Tool> runtimeTools) {
         List<ToolCallback> callbacks = new ArrayList<>();
+        Set<String> approvalRequiredNames = new LinkedHashSet<>();
         for (Tool tool : runtimeTools) {
             Object target = resolveToolTarget(tool);
             ToolCallback[] toolCallbacks = MethodToolCallbackProvider.builder()
@@ -417,8 +489,57 @@ public class SpecialistRunner {
                     .build()
                     .getToolCallbacks();
             callbacks.addAll(Arrays.asList(toolCallbacks));
+            if (tool.getSensitivity() == SensitivityLevel.DANGEROUS) {
+                Arrays.stream(toolCallbacks)
+                        .map(callback -> callback.getToolDefinition().name())
+                        .forEach(approvalRequiredNames::add);
+            }
         }
-        return callbacks;
+        return new RuntimeToolCallbacks(List.copyOf(callbacks), Set.copyOf(approvalRequiredNames));
+    }
+
+    private List<Message> loadSpecialistProtocolMessages(String sessionId, String agentRole, Integer limit) {
+        int queryLimit = limit == null ? DEFAULT_MAX_MESSAGES : limit;
+        List<ChatMessageDTO> specialistMessages = chatMessageFacadeService
+                .getChatMessagesBySessionIdRecently(sessionId, queryLimit)
+                .stream()
+                .filter(dto -> dto.getMetadata() != null && agentRole.equals(dto.getMetadata().getAgentRole()))
+                .toList();
+
+        List<Message> result = new ArrayList<>();
+        for (int i = 0; i < specialistMessages.size(); i++) {
+            ChatMessageDTO dto = specialistMessages.get(i);
+            if (dto.getRole() != ChatMessageDTO.RoleType.ASSISTANT) {
+                continue;
+            }
+            List<AssistantMessage.ToolCall> calls = dto.getMetadata().getToolCalls();
+            if (calls == null || calls.isEmpty()) {
+                result.add(AssistantMessage.builder().content(dto.getContent()).build());
+                continue;
+            }
+            List<ToolResponseMessage.ToolResponse> responses = new ArrayList<>();
+            int nextIndex = i + 1;
+            while (nextIndex < specialistMessages.size()
+                    && specialistMessages.get(nextIndex).getRole() == ChatMessageDTO.RoleType.TOOL) {
+                ChatMessageDTO toolDto = specialistMessages.get(nextIndex);
+                if (toolDto.getMetadata().getToolResponse() != null) {
+                    responses.add(toolDto.getMetadata().getToolResponse());
+                }
+                nextIndex++;
+            }
+            if (!responses.isEmpty()) {
+                result.add(AssistantMessage.builder().content(dto.getContent()).toolCalls(calls).build());
+                result.add(ToolResponseMessage.builder().responses(responses).build());
+                i = nextIndex - 1;
+            }
+        }
+        return result;
+    }
+
+    private record RuntimeToolCallbacks(
+            List<ToolCallback> callbacks,
+            Set<String> approvalRequiredNames
+    ) {
     }
 
     private Object resolveToolTarget(Tool tool) {

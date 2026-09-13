@@ -33,7 +33,7 @@ public class ChatMessageDTO {
     public static class MetaData {
         private ToolResponseMessage.ToolResponse toolResponse;
         private List<AssistantMessage.ToolCall> toolCalls;
-        private String agentRole;  // 多Agent模式下标识消息由哪个Agent产生: "supervisor", "specialist:{name}"
+        private String agentRole;  // "supervisor" 或 "specialist:{agentId}#{runId}"
         private Usage usage;       // LLM token 计量(仅 assistant 消息)
         private EvalScore evalScore; // LLM-as-Judge 自动评分(仅 assistant 消息,异步写入)
     }

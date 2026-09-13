@@ -1,5 +1,5 @@
 import { get, post, patch, del, BASE_URL } from "./http.ts";
-import type { ChatMessageVO, MessageType } from "../types";
+import type { AgentCheckpoint, ChatMessageVO, MessageType } from "../types";
 
 // 类型定义
 export interface ChatOptions {
@@ -228,6 +228,27 @@ export async function updateChatMessage(
  */
 export async function deleteChatMessage(chatMessageId: string): Promise<void> {
   return del<void>(`/chat-messages/${chatMessageId}`);
+}
+
+/** 获取当前会话中等待审批或需要人工核实的检查点。 */
+export async function getPendingCheckpoints(
+  sessionId: string,
+): Promise<AgentCheckpoint[]> {
+  return get<AgentCheckpoint[]>(`/checkpoints/session/${sessionId}/pending`);
+}
+
+/** 批准后端保存的原始 Tool Call；接口返回后由后端异步执行并恢复 Agent。 */
+export async function approveCheckpoint(
+  checkpointId: string,
+): Promise<AgentCheckpoint> {
+  return post<AgentCheckpoint>(`/checkpoints/${checkpointId}/approve`);
+}
+
+/** 拒绝危险操作；后端会写入“未执行”的 ToolResponse 并恢复 Agent。 */
+export async function rejectCheckpoint(
+  checkpointId: string,
+): Promise<AgentCheckpoint> {
+  return post<AgentCheckpoint>(`/checkpoints/${checkpointId}/reject`);
 }
 
 /**

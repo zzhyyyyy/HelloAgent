@@ -1,6 +1,9 @@
 package com.xmu.ShopAssistant.agent;
 
 import com.xmu.ShopAssistant.converter.ChatMessageConverter;
+import com.xmu.ShopAssistant.checkpoint.AgentCheckpointService;
+import com.xmu.ShopAssistant.checkpoint.AgentRuntimeType;
+import com.xmu.ShopAssistant.agent.loop.ToolLoopGuard;
 import com.xmu.ShopAssistant.eval.AgentEvalService;
 import com.xmu.ShopAssistant.guardrails.GuardrailsService;
 import com.xmu.ShopAssistant.message.SseMessage;
@@ -110,6 +113,16 @@ public class ShopAi {
     // LLM-as-Judge 自动评估(持久化后异步触发)
     private AgentEvalService agentEvalService;
 
+    // 危险工具命中后创建持久化检查点，不在当前请求线程中阻塞等待。
+    private AgentCheckpointService checkpointService;
+
+    private Set<String> approvalRequiredToolNames;
+
+    private AgentRuntimeType runtimeType;
+
+    // 每个 Agent 运行实例独享，避免不同会话之间相互影响计数。
+    private ToolLoopGuard toolLoopGuard;
+
     // 最后一次的 ChatResponse
     private ChatResponse lastChatResponse;
 
@@ -137,11 +150,19 @@ public class ShopAi {
                   ChatMessageConverter chatMessageConverter,
                   PromptRegistry promptRegistry,
                   GuardrailsService guardrailsService,
-                  AgentEvalService agentEvalService
+                  AgentEvalService agentEvalService,
+                  AgentCheckpointService checkpointService,
+                  Set<String> approvalRequiredToolNames,
+                  AgentRuntimeType runtimeType,
+                  ToolLoopGuard toolLoopGuard
     ) {
         this.promptRegistry = promptRegistry;
         this.guardrailsService = guardrailsService;
         this.agentEvalService = agentEvalService;
+        this.checkpointService = checkpointService;
+        this.approvalRequiredToolNames = approvalRequiredToolNames == null ? Set.of() : Set.copyOf(approvalRequiredToolNames);
+        this.runtimeType = runtimeType == null ? AgentRuntimeType.SINGLE : runtimeType;
+        this.toolLoopGuard = toolLoopGuard;
         this.agentId = agentId;
         this.name = name;
         this.description = description;
@@ -322,6 +343,11 @@ public class ShopAi {
                 "think.system.v1",
                 java.util.Map.of("kbs", String.valueOf(this.availableKbs))
         );
+        boolean finalAnswerOnly = toolLoopGuard != null && toolLoopGuard.isFused();
+        if (finalAnswerOnly) {
+            thinkPrompt += "\n\n【工具循环保护】" + toolLoopGuard.getFuseReason()
+                    + "。本轮禁止继续调用任何工具，必须基于已有工具结果直接给出最终回答。";
+        }
 
         List<Message> currentMessages = this.chatMemory.get(this.chatSessionId);
         currentMessages = stripOrphanToolResponses(currentMessages);
@@ -335,10 +361,13 @@ public class ShopAi {
         final StringBuilder accumulated = new StringBuilder();
         final AtomicBoolean didStream = new AtomicBoolean(false);
 
-        List<ChatResponse> chunks = this.chatClient
+        var requestSpec = this.chatClient
                 .prompt(prompt)
-                .system(thinkPrompt)
-                .toolCallbacks(this.availableTools.toArray(new ToolCallback[0]))
+                .system(thinkPrompt);
+        if (!finalAnswerOnly) {
+            requestSpec = requestSpec.toolCallbacks(this.availableTools.toArray(new ToolCallback[0]));
+        }
+        List<ChatResponse> chunks = requestSpec
                 .stream()
                 .chatResponse()
                 .doOnNext(resp -> {
@@ -364,6 +393,10 @@ public class ShopAi {
         ChatResponse last = chunks.get(chunks.size() - 1);
         AssistantMessage lastOut = last.getResult().getOutput();
         List<AssistantMessage.ToolCall> mergedToolCalls = mergeToolCalls(chunks);
+        if (finalAnswerOnly) {
+            // 即使模型幻觉出工具调用，也不持久化为未配对的协议消息。
+            mergedToolCalls = List.of();
+        }
         AssistantMessage finalOutput = AssistantMessage.builder()
                 .content(accumulated.toString())
                 .toolCalls(mergedToolCalls)
@@ -503,6 +536,22 @@ public class ShopAi {
             return;
         }
 
+        List<AssistantMessage.ToolCall> toolCalls = this.lastChatResponse.getResult().getOutput().getToolCalls();
+        if (checkpointService != null && checkpointService.pauseIfApprovalRequired(
+                this.chatSessionId,
+                this.agentId,
+                this.agentRole,
+                this.runtimeType,
+                toolCalls,
+                this.approvalRequiredToolNames
+        ).isPresent()) {
+            this.agentState = AgentState.WAITING_APPROVAL;
+            log.info("危险工具调用已暂停并保存检查点，sessionId={}, tools={}",
+                    this.chatSessionId,
+                    toolCalls.stream().map(AssistantMessage.ToolCall::name).toList());
+            return;
+        }
+
         Prompt prompt = Prompt.builder()
                 .messages(this.chatMemory.get(this.chatSessionId))
                 .chatOptions(this.chatOptions)
@@ -577,16 +626,20 @@ public class ShopAi {
         }
 
         try {
-            for (int i = 0; i < MAX_STEPS && agentState != AgentState.FINISHED; i++) {
+            for (int i = 0; i < MAX_STEPS
+                    && agentState != AgentState.FINISHED
+                    && agentState != AgentState.WAITING_APPROVAL; i++) {
                 // 当前步骤，用于实现 Agent Loop
                 int currentStep = i + 1;
                 step();
-                if (currentStep >= MAX_STEPS) {
+                if (currentStep >= MAX_STEPS && agentState != AgentState.WAITING_APPROVAL) {
                     agentState = AgentState.FINISHED;
                     log.warn("Max steps reached, stopping agent");
                 }
             }
-            agentState = AgentState.FINISHED;
+            if (agentState != AgentState.WAITING_APPROVAL) {
+                agentState = AgentState.FINISHED;
+            }
         } catch (Exception e) {
             agentState = AgentState.ERROR;
             log.error("Error running agent", e);

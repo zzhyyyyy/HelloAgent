@@ -118,7 +118,7 @@ const AgentRoleBadge: React.FC<{ role: string }> = ({ role }) => {
   const label = isSupervisor
     ? "协调员"
     : isSpecialist
-      ? role.replace("specialist:", "专家:")
+      ? `专家:${role.replace("specialist:", "").split("#")[0]}`
       : role;
   const cls = isSupervisor
     ? "bg-purple-100 text-purple-700 dark:bg-purple-500/10 dark:text-purple-300"

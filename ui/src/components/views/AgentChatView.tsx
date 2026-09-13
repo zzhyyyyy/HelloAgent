@@ -1,6 +1,6 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useParams, useNavigate, useLocation } from "react-router-dom";
-import { Tag, message as antdMessage } from "antd";
+import { Button, Tag, message as antdMessage } from "antd";
 import { TeamOutlined, UserOutlined } from "@ant-design/icons";
 import AgentChatHistory from "./agentChatView/AgentChatHistory.tsx";
 import AgentChatInput from "./agentChatView/AgentChatInput.tsx";
@@ -9,14 +9,22 @@ import EmbeddingModal from "../modals/EmbeddingModal.tsx";
 import {
   createChatMessage,
   createChatSession,
+  approveCheckpoint,
   getChatMessagesBySessionId,
   getChatSession,
+  getPendingCheckpoints,
+  rejectCheckpoint,
 } from "../../api/api.ts";
 import { SSE_BASE_URL } from "../../api/http.ts";
 import { useAgents } from "../../hooks/useAgents.ts";
 import { useChatSessions } from "../../hooks/useChatSessions.ts";
 import EmptyAgentChatView from "./agentChatView/EmptyAgentChatView.tsx";
-import type { ChatMessageVO, SseMessage, SseMessageType } from "../../types";
+import type {
+  AgentCheckpoint,
+  ChatMessageVO,
+  SseMessage,
+  SseMessageType,
+} from "../../types";
 
 interface AgentChatRouteState {
   init?: boolean;
@@ -34,6 +42,8 @@ const AgentChatView: React.FC = () => {
   const { refreshChatSessions } = useChatSessions();
 
   const [messages, setMessages] = useState<ChatMessageVO[]>([]);
+  const [pendingCheckpoints, setPendingCheckpoints] = useState<AgentCheckpoint[]>([]);
+  const [decidingCheckpointId, setDecidingCheckpointId] = useState<string>();
 
   const addMessage = (message: ChatMessageVO) => {
     setMessages((prevMessages) => [...prevMessages, message]);
@@ -63,12 +73,21 @@ const AgentChatView: React.FC = () => {
     fetchData().then();
   }, [chatSessionId]);
 
+  const refreshPendingCheckpoints = useCallback(async () => {
+    if (!chatSessionId) return;
+    const checkpoints = await getPendingCheckpoints(chatSessionId);
+    setPendingCheckpoints(checkpoints);
+  }, [chatSessionId]);
+
   useEffect(() => {
     if (!chatSessionId) {
       return;
     }
     getChatMessages().then();
-  }, [chatSessionId, getChatMessages]);
+    refreshPendingCheckpoints().catch((error) => {
+      console.error("加载待审批检查点失败:", error);
+    });
+  }, [chatSessionId, getChatMessages, refreshPendingCheckpoints]);
 
   const handleSendMessage = async (
     value: string | { text: string },
@@ -225,6 +244,23 @@ const AgentChatView: React.FC = () => {
             };
             return next;
           });
+        } else if (message.type === "AI_APPROVAL_REQUIRED") {
+          const checkpoint = message.payload?.checkpoint;
+          if (!checkpoint) return;
+          setDisplayAgentStatus(false);
+          setPendingCheckpoints((prev) => {
+            const withoutCurrent = prev.filter((item) => item.id !== checkpoint.id);
+            return [...withoutCurrent, checkpoint];
+          });
+        } else if (message.type === "AI_APPROVAL_RESOLVED") {
+          const checkpoint = message.payload?.checkpoint;
+          if (!checkpoint) return;
+          setPendingCheckpoints((prev) => {
+            const withoutCurrent = prev.filter((item) => item.id !== checkpoint.id);
+            return checkpoint.status === "FAILED" || checkpoint.status === "UNKNOWN"
+              ? [...withoutCurrent, checkpoint]
+              : withoutCurrent;
+          });
         } else if (message.type === "AI_PLANNING") {
           setDisplayAgentStatus(true);
           setAgentStatusText(message.payload.statusText);
@@ -257,7 +293,27 @@ const AgentChatView: React.FC = () => {
       console.log("Closing SSE connection.");
       es.close();
     };
-  }, [chatSessionId]);
+  }, [chatSessionId, getChatMessages, refreshPendingCheckpoints]);
+
+  const decideCheckpoint = async (checkpointId: string, approved: boolean) => {
+    setDecidingCheckpointId(checkpointId);
+    try {
+      if (approved) {
+        await approveCheckpoint(checkpointId);
+        antdMessage.success("已批准，正在执行并继续任务");
+      } else {
+        await rejectCheckpoint(checkpointId);
+        antdMessage.info("已拒绝，危险工具不会执行");
+      }
+      setPendingCheckpoints((prev) => prev.filter((item) => item.id !== checkpointId));
+    } catch (error) {
+      console.error("处理检查点失败:", error);
+      antdMessage.error("处理审批失败，请刷新后重试");
+      await refreshPendingCheckpoints();
+    } finally {
+      setDecidingCheckpointId(undefined);
+    }
+  };
 
   // ⚠️ 所有 hook 必须在条件 return 之前调用,否则前后 render 的 hook 数量不一致会触发
   // "Rendered fewer hooks than expected"。
@@ -336,6 +392,59 @@ const AgentChatView: React.FC = () => {
         agentStatusText={agentStatusText}
         agentStatusType={agentStatusType}
       />
+
+      {pendingCheckpoints.length > 0 && (
+        <div className="px-6 pt-2 shrink-0">
+          <div className="max-w-3xl mx-auto space-y-2">
+            {pendingCheckpoints.map((checkpoint) => {
+              const waiting = checkpoint.status === "WAITING_APPROVAL";
+              return (
+                <div
+                  key={checkpoint.id}
+                  className="rounded-2xl border border-amber-300 bg-amber-50 px-4 py-3 shadow-sm"
+                >
+                  <div className="flex items-start justify-between gap-4">
+                    <div className="min-w-0">
+                      <div className="font-semibold text-amber-900">
+                        {waiting ? "危险操作需要你的确认" : "危险操作状态需要人工核实"}
+                      </div>
+                      <div className="mt-1 text-sm text-amber-800">
+                        工具：{checkpoint.toolNames.join("、")}
+                      </div>
+                      {checkpoint.argumentPreview && (
+                        <pre className="mt-2 max-h-28 overflow-auto whitespace-pre-wrap break-all rounded-lg bg-white/70 p-2 text-xs text-amber-950">
+                          {checkpoint.argumentPreview}
+                        </pre>
+                      )}
+                      {checkpoint.errorMessage && (
+                        <div className="mt-2 text-xs text-red-700">{checkpoint.errorMessage}</div>
+                      )}
+                    </div>
+                    {waiting && (
+                      <div className="flex shrink-0 gap-2">
+                        <Button
+                          danger
+                          disabled={decidingCheckpointId === checkpoint.id}
+                          onClick={() => decideCheckpoint(checkpoint.id, false)}
+                        >
+                          拒绝
+                        </Button>
+                        <Button
+                          type="primary"
+                          loading={decidingCheckpointId === checkpoint.id}
+                          onClick={() => decideCheckpoint(checkpoint.id, true)}
+                        >
+                          批准并继续
+                        </Button>
+                      </div>
+                    )}
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      )}
 
       {/* 底部输入 */}
       <div className="px-6 pb-6 pt-2 shrink-0">

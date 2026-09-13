@@ -1,8 +1,14 @@
 package com.xmu.ShopAssistant.agent;
 
 import com.fasterxml.jackson.core.JsonProcessingException;
+import com.xmu.ShopAssistant.checkpoint.AgentCheckpointProperties;
+import com.xmu.ShopAssistant.checkpoint.AgentCheckpointService;
+import com.xmu.ShopAssistant.checkpoint.AgentRuntimeType;
 import com.xmu.ShopAssistant.agent.multi.DelegateToSpecialistTool;
 import com.xmu.ShopAssistant.agent.tools.Tool;
+import com.xmu.ShopAssistant.agent.tools.security.SensitivityLevel;
+import com.xmu.ShopAssistant.agent.loop.ToolLoopGuard;
+import com.xmu.ShopAssistant.agent.loop.ToolLoopGuardFactory;
 import com.xmu.ShopAssistant.config.ChatClientRegistry;
 import com.xmu.ShopAssistant.converter.AgentConverter;
 import com.xmu.ShopAssistant.converter.ChatMessageConverter;
@@ -63,6 +69,9 @@ public class ShopAiFactory {
     private final List<ToolCallbackProvider> externalToolProviders;
     private final GuardrailsService guardrailsService;
     private final AgentEvalService agentEvalService;
+    private final AgentCheckpointService checkpointService;
+    private final AgentCheckpointProperties checkpointProperties;
+    private final ToolLoopGuardFactory toolLoopGuardFactory;
 
     // 运行时 Agent 配置
     private AgentDTO agentConfig;
@@ -84,7 +93,10 @@ public class ShopAiFactory {
             SkillRegistry skillRegistry,
             @Autowired(required = false) List<ToolCallbackProvider> externalToolProviders,
             GuardrailsService guardrailsService,
-            AgentEvalService agentEvalService
+            AgentEvalService agentEvalService,
+            AgentCheckpointService checkpointService,
+            AgentCheckpointProperties checkpointProperties,
+            ToolLoopGuardFactory toolLoopGuardFactory
     ) {
         this.chatClientRegistry = chatClientRegistry;
         this.sseService = sseService;
@@ -103,6 +115,9 @@ public class ShopAiFactory {
         this.externalToolProviders = externalToolProviders == null ? List.of() : externalToolProviders;
         this.guardrailsService = guardrailsService;
         this.agentEvalService = agentEvalService;
+        this.checkpointService = checkpointService;
+        this.checkpointProperties = checkpointProperties;
+        this.toolLoopGuardFactory = toolLoopGuardFactory;
     }
 
     /** 渐进式披露 · 第 1 层:在 system prompt 末尾追加 Skill 目录。 */
@@ -125,9 +140,18 @@ public class ShopAiFactory {
     /**
      * 将数据库中存储的记忆恢复成 List<Message> 结构
      */
-    private List<Message> loadMemory(String chatSessionId) {
+    private List<Message> loadMemory(String chatSessionId, String runtimeAgentRole) {
         int messageLength = agentConfig.getChatOptions().getMessageLength();
-        List<ChatMessageDTO> chatMessages = chatMessageFacadeService.getChatMessagesBySessionIdRecently(chatSessionId, messageLength);
+        List<ChatMessageDTO> recent = chatMessageFacadeService.getChatMessagesBySessionIdRecently(
+                chatSessionId,
+                Math.max(messageLength, messageLength * 4)
+        );
+        List<ChatMessageDTO> roleSafeMessages = recent.stream()
+                .filter(dto -> belongsToRuntime(dto, runtimeAgentRole))
+                .toList();
+        List<ChatMessageDTO> chatMessages = roleSafeMessages.size() <= messageLength
+                ? roleSafeMessages
+                : roleSafeMessages.subList(roleSafeMessages.size() - messageLength, roleSafeMessages.size());
         List<Message> memory = new ArrayList<>();
 
         String sessionSummary = sessionSummaryService.getSessionSummary(chatSessionId);
@@ -140,6 +164,21 @@ public class ShopAiFactory {
 
         memory.addAll(rebuildProtocolSafeMessages(chatMessages));
         return memory;
+    }
+
+    /** 多 Agent 消息共用一张表，恢复时必须隔离 Supervisor 与 Specialist 的工具协议。 */
+    private boolean belongsToRuntime(ChatMessageDTO dto, String runtimeAgentRole) {
+        if (dto == null || dto.getRole() == null) {
+            return false;
+        }
+        if (dto.getRole() == ChatMessageDTO.RoleType.USER || dto.getRole() == ChatMessageDTO.RoleType.SYSTEM) {
+            return true;
+        }
+        String persistedRole = dto.getMetadata() == null ? null : dto.getMetadata().getAgentRole();
+        if (runtimeAgentRole == null) {
+            return persistedRole == null;
+        }
+        return persistedRole == null || runtimeAgentRole.equals(persistedRole);
     }
 
     private List<Message> rebuildProtocolSafeMessages(List<ChatMessageDTO> chatMessages) {
@@ -275,8 +314,9 @@ public class ShopAiFactory {
         return runtimeTools;
     }
 
-    private List<ToolCallback> buildToolCallbacks(List<Tool> runtimeTools) {
+    private RuntimeToolCallbacks buildToolCallbacks(List<Tool> runtimeTools) {
         List<ToolCallback> callbacks = new ArrayList<>();
+        Set<String> approvalRequiredNames = new LinkedHashSet<>();
         // 1) 来自 @Component Tool bean(项目内置)
         for (Tool tool : runtimeTools) {
             Object target = resolveToolTarget(tool);
@@ -285,6 +325,11 @@ public class ShopAiFactory {
                     .build()
                     .getToolCallbacks();
             callbacks.addAll(Arrays.asList(toolCallbacks));
+            if (tool.getSensitivity() == SensitivityLevel.DANGEROUS) {
+                Arrays.stream(toolCallbacks)
+                        .map(callback -> callback.getToolDefinition().name())
+                        .forEach(approvalRequiredNames::add);
+            }
         }
         // 2) 来自外部 ToolCallbackProvider(MCP server / 自定义集成等)
         for (ToolCallbackProvider provider : externalToolProviders) {
@@ -295,7 +340,8 @@ public class ShopAiFactory {
                         provider.getClass().getSimpleName(), arr.length);
             }
         }
-        return callbacks;
+        approvalRequiredNames.addAll(checkpointProperties.getExternalApprovalRequiredTools());
+        return new RuntimeToolCallbacks(List.copyOf(callbacks), Set.copyOf(approvalRequiredNames));
     }
 
     private Object resolveToolTarget(Tool tool) {
@@ -313,8 +359,9 @@ public class ShopAiFactory {
             Agent agent,
             List<Message> memory,
             List<KnowledgeBaseDTO> knowledgeBases,
-            List<ToolCallback> toolCallbacks,
-            String chatSessionId
+            RuntimeToolCallbacks runtimeToolCallbacks,
+            String chatSessionId,
+            AgentRuntimeType runtimeType
     ) {
         ChatClient chatClient = chatClientRegistry.get(agent.getModel());
         if (Objects.isNull(chatClient)) {
@@ -322,6 +369,11 @@ public class ShopAiFactory {
         }
         String mergedSystemPrompt = mergeSystemPromptWithLongTermMemory(agent.getSystemPrompt(), agent.getId());
         mergedSystemPrompt = mergeSystemPromptWithSkillCatalog(mergedSystemPrompt);
+        ToolLoopGuard loopGuard = toolLoopGuardFactory.create();
+        List<ToolCallback> guardedCallbacks = toolLoopGuardFactory.protect(
+                runtimeToolCallbacks.callbacks(),
+                loopGuard
+        );
         return new ShopAi(
                 agent.getId(),
                 agent.getName(),
@@ -330,7 +382,7 @@ public class ShopAiFactory {
                 chatClient,
                 agentConfig.getChatOptions().getMessageLength(),
                 memory,
-                toolCallbacks,
+                guardedCallbacks,
                 knowledgeBases,
                 chatSessionId,
                 sseService,
@@ -338,7 +390,11 @@ public class ShopAiFactory {
                 chatMessageConverter,
                 promptRegistry,
                 guardrailsService,
-                agentEvalService
+                agentEvalService,
+                checkpointService,
+                runtimeToolCallbacks.approvalRequiredNames(),
+                runtimeType,
+                loopGuard
         );
     }
 
@@ -369,21 +425,22 @@ public class ShopAiFactory {
         Agent agent = loadAgent(agentId);
         AgentDTO agentConfig = toAgentConfig(agent);
         log.info("加载chatSessionId记忆");
-        List<Message> memory = loadMemory(chatSessionId);
+        List<Message> memory = loadMemory(chatSessionId, null);
         log.info("加载chatSessionId记忆成功");
         // 解析 agent 的支持的知识库
         List<KnowledgeBaseDTO> knowledgeBases = resolveRuntimeKnowledgeBases(agentConfig);
         // 解析 agent 支持的工具调用
         List<Tool> runtimeTools = resolveRuntimeTools(agentConfig);
         // 将工具调用转换成 ToolCallback 的形式
-        List<ToolCallback> toolCallbacks = buildToolCallbacks(runtimeTools);
+        RuntimeToolCallbacks runtimeToolCallbacks = buildToolCallbacks(runtimeTools);
 
         return buildAgentRuntime(
                 agent,
                 memory,
                 knowledgeBases,
-                toolCallbacks,
-                chatSessionId
+                runtimeToolCallbacks,
+                chatSessionId,
+                AgentRuntimeType.SINGLE
         );
     }
 
@@ -396,7 +453,7 @@ public class ShopAiFactory {
         Agent agent = loadAgent(userAgentId);
         AgentDTO agentConfig = toAgentConfig(agent);
         log.info("加载 chatSessionId 记忆（Supervisor 模式）");
-        List<Message> memory = loadMemory(chatSessionId);
+        List<Message> memory = loadMemory(chatSessionId, "supervisor");
 
         // 解析知识库
         List<KnowledgeBaseDTO> knowledgeBases = resolveRuntimeKnowledgeBases(agentConfig);
@@ -412,7 +469,7 @@ public class ShopAiFactory {
         );
         runtimeTools.add(delegateTool);
 
-        List<ToolCallback> toolCallbacks = buildToolCallbacks(runtimeTools);
+        RuntimeToolCallbacks runtimeToolCallbacks = buildToolCallbacks(runtimeTools);
 
         // 构建 Supervisor 系统提示词
         String supervisorSystemPrompt = buildSupervisorSystemPrompt(agent, agentConfig, knowledgeBases);
@@ -430,6 +487,12 @@ public class ShopAiFactory {
                 ? agentConfig.getChatOptions().getMessageLength()
                 : 10;
 
+        ToolLoopGuard loopGuard = toolLoopGuardFactory.create();
+        List<ToolCallback> guardedCallbacks = toolLoopGuardFactory.protect(
+                runtimeToolCallbacks.callbacks(),
+                loopGuard
+        );
+
         ShopAi shopAi = new ShopAi(
                 agent.getId(),
                 "Supervisor",
@@ -438,7 +501,7 @@ public class ShopAiFactory {
                 chatClient,
                 messageLength,
                 memory,
-                toolCallbacks,
+                guardedCallbacks,
                 knowledgeBases,
                 chatSessionId,
                 sseService,
@@ -446,10 +509,27 @@ public class ShopAiFactory {
                 chatMessageConverter,
                 promptRegistry,
                 guardrailsService,
-                agentEvalService
+                agentEvalService,
+                checkpointService,
+                runtimeToolCallbacks.approvalRequiredNames(),
+                AgentRuntimeType.SUPERVISOR,
+                loopGuard
         );
         shopAi.setAgentRole("supervisor");
         return shopAi;
+    }
+
+    /** 审批执行阶段按当前 Agent 权限重新解析工具，但执行参数来自持久化检查点。 */
+    public List<ToolCallback> resolveToolCallbacksForCheckpoint(String agentId) {
+        Agent agent = loadAgent(agentId);
+        AgentDTO config = toAgentConfig(agent);
+        return buildToolCallbacks(resolveRuntimeTools(config)).callbacks();
+    }
+
+    private record RuntimeToolCallbacks(
+            List<ToolCallback> callbacks,
+            Set<String> approvalRequiredNames
+    ) {
     }
 
     /**

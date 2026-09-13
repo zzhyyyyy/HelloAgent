@@ -95,6 +95,12 @@ websearch:
 
 # ============== 工具沙箱与安全策略 ==============
 agent:
+  checkpoint:
+    enabled: true
+    storage-dir: ./data/checkpoints
+    argument-preview-max-chars: 500
+    # MCP 等外部工具没有项目内 Tool.getSensitivity()，需按 ToolCallback 名称显式加入。
+    external-approval-required-tools: []
   evolution:
     enabled: true
     storage-dir: ${AGENT_EVOLUTION_DIR:./data/evolution}
@@ -109,6 +115,10 @@ agent:
   skills:
     dir: ${AGENT_SKILLS_DIR:./data/skills}
   tools:
+    loop-guard:
+      enabled: true
+      max-consecutive-same-signature: 3
+      max-consecutive-same-result: 3
     security:
       audit-enabled: true               # 是否打开 [ToolAudit] 结构化日志
 

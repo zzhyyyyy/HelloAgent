@@ -5,6 +5,7 @@ import com.xmu.ShopAssistant.converter.ChatMessageConverter;
 import com.xmu.ShopAssistant.event.ChatEvent;
 import com.xmu.ShopAssistant.exception.BizException;
 import com.xmu.ShopAssistant.mapper.ChatMessageMapper;
+import com.xmu.ShopAssistant.memory.MemoryEventService;
 import com.xmu.ShopAssistant.model.dto.ChatMessageDTO;
 import com.xmu.ShopAssistant.model.entity.ChatMessage;
 import com.xmu.ShopAssistant.model.request.CreateChatMessageRequest;
@@ -33,6 +34,7 @@ public class ChatMessageFacadeServiceImpl implements ChatMessageFacadeService {
     private final ApplicationEventPublisher publisher;
     private final AgentMemoryService agentMemoryService;
     private final SessionSummaryService sessionSummaryService;
+    private final MemoryEventService memoryEventService;
 
     @Override
     public GetChatMessagesResponse getChatMessagesBySessionId(String sessionId) {
@@ -71,6 +73,7 @@ public class ChatMessageFacadeServiceImpl implements ChatMessageFacadeService {
     @Override
     public CreateChatMessageResponse createChatMessage(CreateChatMessageRequest request) {
         ChatMessage chatMessage = doCreateChatMessage(request);
+        memoryEventService.captureChatMessage(request.getAgentId(), chatMessage);
         maybeRememberAgentProfile(request);
         maybeRefreshSessionSummary(request, chatMessage);
         // 发布聊天通知事件
@@ -112,6 +115,7 @@ public class ChatMessageFacadeServiceImpl implements ChatMessageFacadeService {
     @Override
     public CreateChatMessageResponse createChatMessage(ChatMessageDTO chatMessageDTO) {
         ChatMessage chatMessage = doCreateChatMessage(chatMessageDTO);
+        memoryEventService.captureChatMessage(null, chatMessage);
         return CreateChatMessageResponse.builder()
                 .chatMessageId(chatMessage.getId())
                 .build();
@@ -120,6 +124,7 @@ public class ChatMessageFacadeServiceImpl implements ChatMessageFacadeService {
     @Override
     public CreateChatMessageResponse agentCreateChatMessage(CreateChatMessageRequest request) {
         ChatMessage chatMessage = doCreateChatMessage(request);
+        memoryEventService.captureChatMessage(request.getAgentId(), chatMessage);
         // 和 createChatMessage 的区别在于，Agent 创建的 chatMessage 不需要发布事件
         return CreateChatMessageResponse.builder()
                 .chatMessageId(chatMessage.getId())

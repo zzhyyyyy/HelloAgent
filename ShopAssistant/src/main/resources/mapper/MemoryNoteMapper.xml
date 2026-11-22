@@ -1,0 +1,106 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper
+        PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
+        "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.xmu.ShopAssistant.memory.MemoryNoteMapper">
+
+    <resultMap id="BaseResultMap" type="com.xmu.ShopAssistant.memory.MemoryNote">
+        <id property="id" column="id"/>
+        <result property="tenantId" column="tenant_id"/>
+        <result property="ownerId" column="owner_id"/>
+        <result property="agentId" column="agent_id"/>
+        <result property="scope" column="scope" javaType="com.xmu.ShopAssistant.memory.MemoryScope"/>
+        <result property="memoryType" column="memory_type" javaType="com.xmu.ShopAssistant.memory.MemoryNoteType"/>
+        <result property="subject" column="subject"/>
+        <result property="content" column="content"/>
+        <result property="structuredContent" column="structured_content"/>
+        <result property="confidence" column="confidence"/>
+        <result property="salience" column="salience"/>
+        <result property="status" column="status" javaType="com.xmu.ShopAssistant.memory.MemoryNoteStatus"/>
+        <result property="version" column="version"/>
+        <result property="previousNoteId" column="previous_note_id"/>
+        <result property="source" column="source"/>
+        <result property="evidenceCount" column="evidence_count"/>
+        <result property="validFrom" column="valid_from"/>
+        <result property="validTo" column="valid_to"/>
+        <result property="createdAt" column="created_at"/>
+        <result property="updatedAt" column="updated_at"/>
+    </resultMap>
+
+    <insert id="insert" parameterType="com.xmu.ShopAssistant.memory.MemoryNote">
+        INSERT INTO memory_note
+        (id, tenant_id, owner_id, agent_id, scope, memory_type, subject, content,
+         structured_content, confidence, salience, status, version, previous_note_id,
+         source, evidence_count, valid_from, valid_to, created_at, updated_at)
+        VALUES
+        (CAST(#{id} AS uuid), #{tenantId}, #{ownerId},
+         <choose><when test="agentId != null and agentId != ''">CAST(#{agentId} AS uuid)</when><otherwise>NULL</otherwise></choose>,
+         #{scope}, #{memoryType}, #{subject}, #{content}, CAST(#{structuredContent} AS jsonb),
+         #{confidence}, #{salience}, #{status}, #{version},
+         <choose><when test="previousNoteId != null and previousNoteId != ''">CAST(#{previousNoteId} AS uuid)</when><otherwise>NULL</otherwise></choose>,
+         #{source}, #{evidenceCount}, #{validFrom}, #{validTo}, #{createdAt}, #{updatedAt})
+    </insert>
+
+    <update id="update" parameterType="com.xmu.ShopAssistant.memory.MemoryNote">
+        UPDATE memory_note
+        <set>
+            <if test="confidence != null">confidence = #{confidence},</if>
+            <if test="status != null">status = #{status},</if>
+            <if test="evidenceCount != null">evidence_count = #{evidenceCount},</if>
+            <if test="validTo != null">valid_to = #{validTo},</if>
+            updated_at = #{updatedAt}
+        </set>
+        WHERE id = CAST(#{id} AS uuid)
+    </update>
+
+    <select id="selectActiveBySubject" resultMap="BaseResultMap">
+        SELECT *, structured_content::text AS structured_content
+        FROM memory_note
+        WHERE tenant_id = #{tenantId}
+          AND owner_id = #{ownerId}
+          AND scope = #{scope}
+          AND subject = #{subject}
+          AND status = 'ACTIVE'
+          AND (agent_id = CAST(#{agentId} AS uuid) OR (agent_id IS NULL AND #{agentId} IS NULL))
+        ORDER BY version DESC
+        LIMIT 1
+    </select>
+
+    <select id="selectActiveByOwner" resultMap="BaseResultMap">
+        SELECT *, structured_content::text AS structured_content
+        FROM memory_note
+        WHERE tenant_id = #{tenantId}
+          AND owner_id = #{ownerId}
+          AND status = 'ACTIVE'
+          AND (agent_id = CAST(#{agentId} AS uuid) OR agent_id IS NULL)
+        ORDER BY salience DESC, confidence DESC, updated_at DESC
+        LIMIT #{limit}
+    </select>
+
+    <select id="searchActive" resultMap="BaseResultMap">
+        SELECT *, structured_content::text AS structured_content
+        FROM memory_note
+        WHERE tenant_id = #{tenantId}
+          AND owner_id = #{ownerId}
+          AND status = 'ACTIVE'
+          AND (agent_id = CAST(#{agentId} AS uuid) OR agent_id IS NULL)
+          AND to_tsvector('simple', COALESCE(subject, '') || ' ' || COALESCE(content, ''))
+              @@ websearch_to_tsquery('simple', #{query})
+        ORDER BY ts_rank_cd(
+                to_tsvector('simple', COALESCE(subject, '') || ' ' || COALESCE(content, '')),
+                websearch_to_tsquery('simple', #{query})
+                 ) DESC,
+                 salience DESC,
+                 confidence DESC
+        LIMIT #{limit}
+    </select>
+
+    <insert id="insertEvidence" parameterType="com.xmu.ShopAssistant.memory.MemoryNoteEvidence">
+        INSERT INTO memory_note_evidence
+        (id, note_id, event_id, evidence_role, evidence_excerpt, created_at)
+        VALUES
+        (CAST(#{id} AS uuid), CAST(#{noteId} AS uuid), CAST(#{eventId} AS uuid),
+         #{evidenceRole}, #{evidenceExcerpt}, #{createdAt})
+        ON CONFLICT (note_id, event_id, evidence_role) DO NOTHING
+    </insert>
+</mapper>

@@ -17,13 +17,13 @@ import com.xmu.ShopAssistant.eval.AgentEvalService;
 import com.xmu.ShopAssistant.guardrails.GuardrailsService;
 import com.xmu.ShopAssistant.mapper.AgentMapper;
 import com.xmu.ShopAssistant.mapper.KnowledgeBaseMapper;
+import com.xmu.ShopAssistant.memory.MemoryContextAssembler;
 import com.xmu.ShopAssistant.model.dto.AgentDTO;
 import com.xmu.ShopAssistant.model.dto.ChatMessageDTO;
 import com.xmu.ShopAssistant.model.dto.KnowledgeBaseDTO;
 import com.xmu.ShopAssistant.model.entity.Agent;
 import com.xmu.ShopAssistant.model.entity.KnowledgeBase;
 import com.xmu.ShopAssistant.prompt.PromptRegistry;
-import com.xmu.ShopAssistant.service.AgentMemoryService;
 import com.xmu.ShopAssistant.skill.SkillRegistry;
 import com.xmu.ShopAssistant.service.ChatMessageFacadeService;
 import com.xmu.ShopAssistant.service.SessionSummaryService;
@@ -60,7 +60,7 @@ public class ShopAiFactory {
     private final ToolFacadeService toolFacadeService;
     private final ChatMessageFacadeService chatMessageFacadeService;
     private final ChatMessageConverter chatMessageConverter;
-    private final AgentMemoryService agentMemoryService;
+    private final MemoryContextAssembler memoryContextAssembler;
     private final SessionSummaryService sessionSummaryService;
     private final SpecialistRunner specialistRunner;
     private final PromptRegistry promptRegistry;
@@ -86,7 +86,7 @@ public class ShopAiFactory {
             ToolFacadeService toolFacadeService,
             ChatMessageFacadeService chatMessageFacadeService,
             ChatMessageConverter chatMessageConverter,
-            AgentMemoryService agentMemoryService,
+            MemoryContextAssembler memoryContextAssembler,
             SessionSummaryService sessionSummaryService,
             SpecialistRunner specialistRunner,
             PromptRegistry promptRegistry,
@@ -107,7 +107,7 @@ public class ShopAiFactory {
         this.toolFacadeService = toolFacadeService;
         this.chatMessageFacadeService = chatMessageFacadeService;
         this.chatMessageConverter = chatMessageConverter;
-        this.agentMemoryService = agentMemoryService;
+        this.memoryContextAssembler = memoryContextAssembler;
         this.sessionSummaryService = sessionSummaryService;
         this.specialistRunner = specialistRunner;
         this.promptRegistry = promptRegistry;
@@ -367,7 +367,8 @@ public class ShopAiFactory {
         if (Objects.isNull(chatClient)) {
             throw new IllegalStateException("未找到对应的 ChatClient: " + agent.getModel());
         }
-        String mergedSystemPrompt = mergeSystemPromptWithLongTermMemory(agent.getSystemPrompt(), agent.getId());
+        String mergedSystemPrompt = mergeSystemPromptWithLongTermMemory(
+                agent.getSystemPrompt(), agent.getId(), chatSessionId);
         mergedSystemPrompt = mergeSystemPromptWithSkillCatalog(mergedSystemPrompt);
         ToolLoopGuard loopGuard = toolLoopGuardFactory.create();
         List<ToolCallback> guardedCallbacks = toolLoopGuardFactory.protect(
@@ -398,20 +399,12 @@ public class ShopAiFactory {
         );
     }
 
-    private String mergeSystemPromptWithLongTermMemory(String systemPrompt, String agentId) {
-        List<String> facts = agentMemoryService.listFactsByAgentId(agentId, 20);
-        if (facts.isEmpty()) {
+    private String mergeSystemPromptWithLongTermMemory(
+            String systemPrompt, String agentId, String chatSessionId) {
+        String addon = memoryContextAssembler.buildInjectedContext(agentId, chatSessionId);
+        if (!StringUtils.hasText(addon)) {
             return systemPrompt;
         }
-        String memoryPrompt = facts.stream()
-                .map(f -> "- " + f)
-                .collect(Collectors.joining("\n"));
-        String addon = """
-                【跨会话用户画像记忆】
-                以下信息来自历史会话，可用于个性化回答；若与用户当前明确表述冲突，以当前会话为准：
-                %s
-                """.formatted(memoryPrompt);
-
         if (!StringUtils.hasText(systemPrompt)) {
             return addon;
         }
@@ -480,7 +473,8 @@ public class ShopAiFactory {
             throw new IllegalStateException("未找到对应的 ChatClient: " + agent.getModel());
         }
 
-        String mergedPrompt = mergeSystemPromptWithLongTermMemory(supervisorSystemPrompt, agent.getId());
+        String mergedPrompt = mergeSystemPromptWithLongTermMemory(
+                supervisorSystemPrompt, agent.getId(), chatSessionId);
         mergedPrompt = mergeSystemPromptWithSkillCatalog(mergedPrompt);
 
         int messageLength = agentConfig.getChatOptions() != null && agentConfig.getChatOptions().getMessageLength() != null

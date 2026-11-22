@@ -1,0 +1,63 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper
+        PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
+        "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.xmu.ShopAssistant.memory.MemoryEventMapper">
+
+    <resultMap id="BaseResultMap" type="com.xmu.ShopAssistant.memory.MemoryEvent">
+        <id property="id" column="id" jdbcType="VARCHAR"/>
+        <result property="tenantId" column="tenant_id"/>
+        <result property="ownerId" column="owner_id"/>
+        <result property="sessionId" column="session_id" jdbcType="VARCHAR"/>
+        <result property="agentId" column="agent_id" jdbcType="VARCHAR"/>
+        <result property="agentRole" column="agent_role"/>
+        <result property="eventType" column="event_type" javaType="com.xmu.ShopAssistant.memory.MemoryEventType"/>
+        <result property="eventKey" column="event_key"/>
+        <result property="role" column="role"/>
+        <result property="content" column="content"/>
+        <result property="structuredPayload" column="structured_payload"/>
+        <result property="sourceType" column="source_type" javaType="com.xmu.ShopAssistant.memory.MemorySourceType"/>
+        <result property="trustLevel" column="trust_level" javaType="com.xmu.ShopAssistant.memory.MemoryTrustLevel"/>
+        <result property="sourceMessageId" column="source_message_id" jdbcType="VARCHAR"/>
+        <result property="sequenceNo" column="sequence_no"/>
+        <result property="createdAt" column="created_at" jdbcType="TIMESTAMP"/>
+    </resultMap>
+
+    <insert id="insert" parameterType="com.xmu.ShopAssistant.memory.MemoryEvent">
+        INSERT INTO memory_event
+        (id, tenant_id, owner_id, session_id, agent_id, agent_role, event_type, event_key,
+         role, content, structured_payload, source_type, trust_level, source_message_id, created_at)
+        VALUES
+        (CAST(#{id} AS uuid), #{tenantId}, #{ownerId}, CAST(#{sessionId} AS uuid),
+         <choose><when test="agentId != null and agentId != ''">CAST(#{agentId} AS uuid)</when><otherwise>NULL</otherwise></choose>,
+         #{agentRole}, #{eventType}, #{eventKey}, #{role}, #{content},
+         CAST(#{structuredPayload} AS jsonb), #{sourceType}, #{trustLevel},
+         <choose><when test="sourceMessageId != null and sourceMessageId != ''">CAST(#{sourceMessageId} AS uuid)</when><otherwise>NULL</otherwise></choose>,
+         #{createdAt})
+        ON CONFLICT (source_message_id, event_type, event_key)
+        WHERE source_message_id IS NOT NULL
+        DO NOTHING
+    </insert>
+
+    <select id="selectByOwner" resultMap="BaseResultMap">
+        SELECT id, tenant_id, owner_id, session_id, agent_id, agent_role, event_type, event_key,
+               role, content, structured_payload::text AS structured_payload, source_type,
+               trust_level, source_message_id, sequence_no, created_at
+        FROM memory_event
+        WHERE tenant_id = #{tenantId} AND owner_id = #{ownerId}
+        ORDER BY sequence_no DESC
+        LIMIT #{limit}
+    </select>
+
+    <select id="selectBySession" resultMap="BaseResultMap">
+        SELECT id, tenant_id, owner_id, session_id, agent_id, agent_role, event_type, event_key,
+               role, content, structured_payload::text AS structured_payload, source_type,
+               trust_level, source_message_id, sequence_no, created_at
+        FROM memory_event
+        WHERE tenant_id = #{tenantId}
+          AND owner_id = #{ownerId}
+          AND session_id = CAST(#{sessionId} AS uuid)
+        ORDER BY sequence_no ASC
+        LIMIT #{limit}
+    </select>
+</mapper>

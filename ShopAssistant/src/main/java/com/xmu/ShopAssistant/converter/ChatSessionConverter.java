@@ -66,6 +66,7 @@ public class ChatSessionConverter {
 
         ChatSessionDTO.MetaData metadata = ChatSessionDTO.MetaData.builder()
                 .mode(request.getMode() != null ? request.getMode() : "SINGLE")
+                .memoryOwnerId(request.getMemoryOwnerId())
                 .build();
 
         return ChatSessionDTO.builder()

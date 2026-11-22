@@ -95,6 +95,18 @@ websearch:
 
 # ============== 工具沙箱与安全策略 ==============
 agent:
+  memory:
+    enabled: true
+    fail-open: true
+    # 当前项目尚未接入登录/租户体系；生产环境应由真实身份覆盖这两个默认值。
+    default-tenant-id: local
+    default-owner-id: local-user
+    injected-context:
+      total-token-budget: 1800
+      stable-profile-budget: 350
+      retrieved-memory-budget: 1000
+      max-notes: 8
+      max-pages: 3
   checkpoint:
     enabled: true
     storage-dir: ./data/checkpoints

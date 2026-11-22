@@ -27,5 +27,6 @@ public class ChatSessionDTO {
         private Integer summarizedMessageCount;
         private LocalDateTime summaryUpdatedAt;
         private String mode; // "SINGLE" 或 "MULTI"（多Agent模式）
+        private String memoryOwnerId; // 跨会话记忆所有者，用于用户隔离
     }
 }

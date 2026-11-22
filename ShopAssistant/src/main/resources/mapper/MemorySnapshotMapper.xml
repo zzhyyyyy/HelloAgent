@@ -1,0 +1,66 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper
+        PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
+        "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.xmu.ShopAssistant.memory.MemorySnapshotMapper">
+
+    <resultMap id="SnapshotMap" type="com.xmu.ShopAssistant.memory.MemorySnapshot">
+        <id property="id" column="id"/>
+        <result property="tenantId" column="tenant_id"/>
+        <result property="ownerId" column="owner_id"/>
+        <result property="agentId" column="agent_id"/>
+        <result property="version" column="version"/>
+        <result property="status" column="status" javaType="com.xmu.ShopAssistant.memory.MemorySnapshotStatus"/>
+        <result property="previousSnapshotId" column="previous_snapshot_id"/>
+        <result property="summary" column="summary"/>
+        <result property="createdAt" column="created_at"/>
+        <result property="activatedAt" column="activated_at"/>
+    </resultMap>
+
+    <insert id="insert" parameterType="com.xmu.ShopAssistant.memory.MemorySnapshot">
+        INSERT INTO memory_snapshot
+        (id, tenant_id, owner_id, agent_id, version, status, previous_snapshot_id,
+         summary, created_at, activated_at)
+        VALUES
+        (CAST(#{id} AS uuid), #{tenantId}, #{ownerId},
+         <choose><when test="agentId != null and agentId != ''">CAST(#{agentId} AS uuid)</when><otherwise>NULL</otherwise></choose>,
+         #{version}, #{status},
+         <choose><when test="previousSnapshotId != null and previousSnapshotId != ''">CAST(#{previousSnapshotId} AS uuid)</when><otherwise>NULL</otherwise></choose>,
+         #{summary}, #{createdAt}, #{activatedAt})
+    </insert>
+
+    <update id="updateStatus">
+        UPDATE memory_snapshot
+        SET status = #{status},
+            activated_at = CASE WHEN #{status} = 'ACTIVE' THEN NOW() ELSE activated_at END
+        WHERE id = CAST(#{id} AS uuid)
+    </update>
+
+    <select id="selectById" resultMap="SnapshotMap">
+        SELECT * FROM memory_snapshot WHERE id = CAST(#{id} AS uuid)
+    </select>
+
+    <select id="selectActive" resultMap="SnapshotMap">
+        SELECT *
+        FROM memory_snapshot
+        WHERE tenant_id = #{tenantId}
+          AND owner_id = #{ownerId}
+          AND status = 'ACTIVE'
+          AND (agent_id = CAST(#{agentId} AS uuid) OR (agent_id IS NULL AND #{agentId} IS NULL))
+        ORDER BY version DESC
+        LIMIT 1
+    </select>
+
+    <insert id="insertItem" parameterType="com.xmu.ShopAssistant.memory.MemorySnapshotItem">
+        INSERT INTO memory_snapshot_item (snapshot_id, item_type, item_id)
+        VALUES (CAST(#{snapshotId} AS uuid), #{itemType}, CAST(#{itemId} AS uuid))
+        ON CONFLICT (snapshot_id, item_type, item_id) DO NOTHING
+    </insert>
+
+    <select id="selectItems" resultType="com.xmu.ShopAssistant.memory.MemorySnapshotItem">
+        SELECT snapshot_id AS snapshotId, item_type AS itemType, item_id AS itemId
+        FROM memory_snapshot_item
+        WHERE snapshot_id = CAST(#{snapshotId} AS uuid)
+        ORDER BY item_type, item_id
+    </select>
+</mapper>

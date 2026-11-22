@@ -1,0 +1,87 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper
+        PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
+        "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.xmu.ShopAssistant.memory.MemoryDreamMapper">
+
+    <resultMap id="JobMap" type="com.xmu.ShopAssistant.memory.MemoryDreamJob">
+        <id property="id" column="id"/>
+        <result property="tenantId" column="tenant_id"/>
+        <result property="ownerId" column="owner_id"/>
+        <result property="agentId" column="agent_id"/>
+        <result property="inputSnapshotId" column="input_snapshot_id"/>
+        <result property="outputSnapshotId" column="output_snapshot_id"/>
+        <result property="instructions" column="instructions"/>
+        <result property="status" column="status" javaType="com.xmu.ShopAssistant.memory.MemoryDreamStatus"/>
+        <result property="summary" column="summary"/>
+        <result property="errorMessage" column="error_message"/>
+        <result property="createdAt" column="created_at"/>
+        <result property="startedAt" column="started_at"/>
+        <result property="completedAt" column="completed_at"/>
+    </resultMap>
+
+    <resultMap id="ProposalMap" type="com.xmu.ShopAssistant.memory.MemoryChangeProposal">
+        <id property="id" column="id"/>
+        <result property="dreamJobId" column="dream_job_id"/>
+        <result property="snapshotId" column="snapshot_id"/>
+        <result property="changeType" column="change_type"/>
+        <result property="targetType" column="target_type"/>
+        <result property="targetId" column="target_id"/>
+        <result property="rationale" column="rationale"/>
+        <result property="evidence" column="evidence"/>
+        <result property="status" column="status" javaType="com.xmu.ShopAssistant.memory.MemoryProposalStatus"/>
+        <result property="createdAt" column="created_at"/>
+        <result property="decidedAt" column="decided_at"/>
+    </resultMap>
+
+    <insert id="insertJob" parameterType="com.xmu.ShopAssistant.memory.MemoryDreamJob">
+        INSERT INTO memory_dream_job
+        (id, tenant_id, owner_id, agent_id, input_snapshot_id, output_snapshot_id,
+         instructions, status, summary, error_message, created_at, started_at, completed_at)
+        VALUES
+        (CAST(#{id} AS uuid), #{tenantId}, #{ownerId},
+         <choose><when test="agentId != null and agentId != ''">CAST(#{agentId} AS uuid)</when><otherwise>NULL</otherwise></choose>,
+         <choose><when test="inputSnapshotId != null and inputSnapshotId != ''">CAST(#{inputSnapshotId} AS uuid)</when><otherwise>NULL</otherwise></choose>,
+         NULL, #{instructions}, #{status}, NULL, NULL, #{createdAt}, NULL, NULL)
+    </insert>
+
+    <update id="updateJob" parameterType="com.xmu.ShopAssistant.memory.MemoryDreamJob">
+        UPDATE memory_dream_job
+        <set>
+            <if test="outputSnapshotId != null">output_snapshot_id = CAST(#{outputSnapshotId} AS uuid),</if>
+            <if test="status != null">status = #{status},</if>
+            <if test="summary != null">summary = #{summary},</if>
+            <if test="errorMessage != null">error_message = #{errorMessage},</if>
+            <if test="startedAt != null">started_at = #{startedAt},</if>
+            <if test="completedAt != null">completed_at = #{completedAt},</if>
+        </set>
+        WHERE id = CAST(#{id} AS uuid)
+    </update>
+
+    <select id="selectJob" resultMap="JobMap">
+        SELECT * FROM memory_dream_job WHERE id = CAST(#{id} AS uuid)
+    </select>
+
+    <insert id="insertProposal" parameterType="com.xmu.ShopAssistant.memory.MemoryChangeProposal">
+        INSERT INTO memory_change_proposal
+        (id, dream_job_id, snapshot_id, change_type, target_type, target_id,
+         rationale, evidence, status, created_at, decided_at)
+        VALUES
+        (CAST(#{id} AS uuid), CAST(#{dreamJobId} AS uuid), CAST(#{snapshotId} AS uuid),
+         #{changeType}, #{targetType}, CAST(#{targetId} AS uuid), #{rationale},
+         CAST(#{evidence} AS jsonb), #{status}, #{createdAt}, #{decidedAt})
+    </insert>
+
+    <update id="updateProposalStatus">
+        UPDATE memory_change_proposal
+        SET status = #{status}, decided_at = NOW()
+        WHERE id = CAST(#{id} AS uuid)
+    </update>
+
+    <select id="selectProposals" resultMap="ProposalMap">
+        SELECT *, evidence::text AS evidence
+        FROM memory_change_proposal
+        WHERE snapshot_id = CAST(#{snapshotId} AS uuid)
+        ORDER BY created_at
+    </select>
+</mapper>

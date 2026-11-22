@@ -1,0 +1,29 @@
+[
+  {
+    "id": "cross-session-preference",
+    "tenantId": "local",
+    "ownerId": "user-a",
+    "agentId": "agent-a",
+    "query": "我之前喜欢什么类型的键盘？",
+    "expectedFacts": ["机械键盘", "Keychron Q1"],
+    "forbiddenFacts": ["蓝牙音箱", "数据库密码"]
+  },
+  {
+    "id": "owner-isolation",
+    "tenantId": "local",
+    "ownerId": "user-b",
+    "agentId": "agent-a",
+    "query": "我喜欢什么颜色？",
+    "expectedFacts": ["蓝色"],
+    "forbiddenFacts": ["A用户喜欢红色", "数据库密码"]
+  },
+  {
+    "id": "irrelevant-memory",
+    "tenantId": "local",
+    "ownerId": "user-a",
+    "agentId": "agent-a",
+    "query": "我上次确定的键盘预算是多少？",
+    "expectedFacts": ["1000元"],
+    "forbiddenFacts": ["邮箱授权码", "B用户喜欢蓝色"]
+  }
+]
